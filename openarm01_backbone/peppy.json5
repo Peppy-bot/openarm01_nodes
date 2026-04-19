@@ -1,0 +1,88 @@
+// This node will expose actions to move the arms from openarm01_joint_commander and will ensure the arms do not collide with the `collisions_detection` node before transmiting them to either the isaac/mujoco variants or the real robot
+{
+  schema_version: 1,
+  manifest: {
+    name: "openarm01_backbone",
+    tag: "0.1.0",
+    depends_on: {
+      // We use generic nodes that can do ik/collision/pose estimation on any node here and we write the code specific to openarm01 here in this node
+      nodes: [
+        {
+          name: "inverse_kinematic",
+          tag: "0.1.0",
+          local_id: "ik"
+        },
+        {
+          name: "collisions_detection",
+          tag: "0.1.0",
+          local_id: "colisions"
+        }
+      ]
+    },
+    variants: [
+      {
+        name: "default",
+        source: {
+          local: "./variants/real"
+        }
+      },
+      {
+        name: "mujoco",
+        source: {
+          local: "./variants/mujoco"
+        }
+      },
+      {
+        name: "isaac",
+        source: {
+          local: "./variants/isaac"
+        }
+      },
+    ]
+  },
+  // Non exhaustive list of interfaces
+  interfaces: {
+    actions: {
+      exposes: [
+        {
+          name: "move_arm",
+          goal_service: {
+            request_message_format: {
+              // The arm ID to understand if it's left of right
+              arm_id: "u16",
+              // x, y, z
+              desired_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            },
+            response_message_format: {
+              accepted: "bool"
+            }
+          },
+          // As the arm moves, the position is being sent as feedback
+          feedback_topic: {
+            qos_profile: "standard",
+            message_format: {
+              current_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            }
+          },
+          result_service: {
+            response_message_format: {
+              final_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            }
+          }
+        }
+      ]
+    },
+  },
+}

@@ -1,1 +1,1 @@
-# openarm01_nodes
+PeppyOS nodes for OpenArm01

@@ -1,0 +1,58 @@
+// This node sends controls for each arm of the OpenArm01 robot, those controls can emanate from the TUI or from a pose estimation algorithm
+// Since the controls are specific to the openarm01 robot, we prefix the node with `openarm01_*`
+{
+  schema_version: 1,
+  manifest: {
+    name: "openarm01_joint_commander",
+    tag: "0.1.0",
+    depends_on: {
+      nodes: [
+        {
+          name: "openarm01_backbone",
+          tag: "0.1.0",
+          local_id: "openarm01_backbone"
+        },
+        // This dependency is only needed for the `pose_estimation` variant, so in the future we will introduce a `for_variant: "pose_estimation"` keyword
+        {
+          name: "uvc_camera",
+          tag: "0.1.0",
+          local_id: "uvc_camera"
+        }
+      ]
+    },
+    variants: [
+      // The variant to control the robot via the TUI
+      {
+        name: "default",
+        source: {
+          local: "./variants/keyboard"
+        }
+      },
+      // This variant turns feed from uvc_camera into cartesian positions
+      // Although the keyboard variant and the pose estimation variant are very distinct controls, they both share the same goal of "moving the robot arm"
+      {
+        name: "pose_estimation",
+        source: {
+          local: "./variants/pose_estimation"
+        }
+      },
+    ]
+  },
+  execution: {
+    language: "rust",
+    container: {
+      def_file: "apptainer.def"
+    }
+  },
+  // Non exhaustive list of interfaces
+  interfaces: {
+    actions: {
+      consumes: [
+        {
+          local_node_id: "openarm01_backbone",
+          name: "move_arm"
+        }
+      ]
+    },
+  }
+}

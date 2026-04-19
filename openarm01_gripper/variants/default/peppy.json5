@@ -1,0 +1,12 @@
+{
+  execution: {
+    language: "python",
+    container: {
+      def_file: "apptainer.def"
+    },
+    parameters: {
+      // The gripper_id at runtime
+      gripper_id: "u8"
+    }
+  }
+}
