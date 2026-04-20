@@ -1,12 +1,12 @@
 {
   execution: {
-    language: "rust",
+    language: "python",
     container: {
       def_file: "apptainer.def"
     },
     parameters: {
-      // The arm_id at runtime
-      arm_id: "u8"
+      // The gripper_id at runtime
+      gripper_id: "u8"
     }
   }
 }

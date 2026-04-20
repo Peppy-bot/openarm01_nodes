@@ -29,5 +29,51 @@
         }
       },
     ]
-  }
+  },
+  // Non exhaustive list of interfaces
+  interfaces: {
+    actions: {
+      exposes: [
+        {
+          name: "move_gripper",
+          goal_service: {
+            // TODO: Maybe add "feedback_frequency" to the request parameters here
+            request_message_format: {
+              // The gripper ID to understand if it's left of right
+              gripper_id: "u16",
+              // x, y, z
+              desired_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            },
+            response_message_format: {
+              accepted: "bool"
+            }
+          },
+          // As the gripper moves, the position is being sent as feedback
+          feedback_topic: {
+            qos_profile: "standard",
+            message_format: {
+              current_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            }
+          },
+          result_service: {
+            response_message_format: {
+              final_position: {
+                $type: "array",
+                $items: "i32",
+                $length: 3
+              }
+            }
+          }
+        }
+      ]
+    },
+  },
 }
