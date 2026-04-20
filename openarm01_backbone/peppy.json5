@@ -28,11 +28,6 @@
           tag: "0.1.0",
           local_id: "gripper"
         },
-        {
-          name: "uvc_camera",
-          tag: "0.1.0",
-          local_id: "uvc_camera"
-        },
       ]
     },
     variants: [
