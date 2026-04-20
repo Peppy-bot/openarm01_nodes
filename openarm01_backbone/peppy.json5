@@ -16,7 +16,18 @@
           name: "collisions_detection",
           tag: "0.1.0",
           local_id: "colisions"
-        }
+        },
+        // Component nodes — must start first; backbone plugs into them
+        {
+          name: "openarm01_arm",
+          tag: "0.1.0",
+          local_id: "arm"
+        },
+        {
+          name: "openarm01_gripper",
+          tag: "0.1.0",
+          local_id: "gripper"
+        },
       ]
     },
     variants: [

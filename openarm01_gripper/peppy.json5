@@ -1,19 +1,11 @@
-// This node represents a single gripper in the openarm01 robot, the user will instanciate two different gripper, each with a different `gripper_id` input parameter
+// This node represents a single gripper in the openarm01 robot, the user will instanciate two different gripper, each with a different `gripper_id` input parameter.
+// This is a root component node — openarm01_backbone depends on it, not the other way around.
+// It is a "stupid" node that relays gripper commands from openarm01_backbone to either the real robot or the sims.
 {
   schema_version: 1,
   manifest: {
     name: "openarm01_gripper",
     tag: "0.1.0",
-    depends_on: {
-      // Since the role of openarm01_backbone is to ensure IK and colisions detections, this node is just a "stupid" node that relay the gripper commands to either the real robot or the sims
-      nodes: [
-        {
-          name: "openarm01_backbone",
-          tag: "0.1.0",
-          local_id: "openarm01_backbone"
-        },
-      ]
-    },
     variants: [
       // The real thing
       {
@@ -24,14 +16,14 @@
       },
       // The isaac sim variant
       {
-        name: "pose_estimation",
+        name: "isaac",
         source: {
           local: "./variants/isaac"
         }
       },
       // The mujoco variant
       {
-        name: "pose_estimation",
+        name: "mujoco",
         source: {
           local: "./variants/mujoco"
         }
