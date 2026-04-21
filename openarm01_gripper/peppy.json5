@@ -40,7 +40,7 @@
             // TODO: Maybe add "feedback_frequency" to the request parameters here
             request_message_format: {
               // The gripper ID to understand if it's left of right
-              gripper_id: "u16",
+              gripper_id: "u8",
               // x, y, z
               desired_position: {
                 $type: "array",
@@ -56,7 +56,10 @@
           feedback_topic: {
             qos_profile: "standard",
             message_format: {
-              joint_positions: { $type: "array", $items: "f64" },
+              joint_positions: {
+                $type: "array",
+                $items: "f64"
+              },
               sim_time: "f64"
             }
           },
@@ -64,7 +67,10 @@
             response_message_format: {
               success: "bool",
               message: "string",
-              final_joint_positions: { $type: "array", $items: "f64" },
+              final_joint_positions: {
+                $type: "array",
+                $items: "f64"
+              },
               sim_time: "f64"
             }
           }
