@@ -51,6 +51,8 @@
         // Only consumed in the pose_estimation variant
         { local_node_id: "pose_estimator", name: "teleop/hand_pose" },
         { local_node_id: "pose_estimator", name: "teleop/marker_pose" },
+        { local_node_id: "openarm01_backbone", name: "joint_states" },
+        { local_node_id: "openarm01_backbone", name: "controller/status" },
       ]
     },
     actions: {
