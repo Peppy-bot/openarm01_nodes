@@ -14,9 +14,9 @@
         },
         // This dependency is only needed for the `pose_estimation` variant, so in the future we will introduce a `for_variant: "pose_estimation"` keyword
         {
-          name: "uvc_camera",
+          name: "pose_estimator",
           tag: "0.1.0",
-          local_id: "uvc_camera"
+          local_id: "pose_estimator"
         }
       ]
     },
@@ -46,6 +46,13 @@
   },
   // Non exhaustive list of interfaces
   interfaces: {
+    topics: {
+      consumes: [
+        // Only consumed in the pose_estimation variant
+        { local_node_id: "pose_estimator", name: "teleop/hand_pose" },
+        { local_node_id: "pose_estimator", name: "teleop/marker_pose" },
+      ]
+    },
     actions: {
       consumes: [
         {
