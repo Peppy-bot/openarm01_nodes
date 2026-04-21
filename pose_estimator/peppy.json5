@@ -1,0 +1,43 @@
+{
+  schema_version: 1,
+  manifest: {
+    name: "pose_estimator",
+    tag: "0.1.0",
+    depends_on: {
+      nodes: [
+        { name: "uvc_camera", tag: "0.1.0", local_id: "uvc_camera" }
+      ]
+    }
+  },
+  interfaces: {
+    topics: {
+      emits: [
+        {
+          name: "teleop/marker_pose",
+          qos_profile: "sensor_data",
+          message_format: {
+            position:    { $type: "array", $items: "f64", $length: 3 },
+            orientation: { $type: "array", $items: "f64", $length: 4 },
+            confidence:  "f64",
+            marker_id:   "u32",
+            stamp:       "time"
+          }
+        },
+        {
+          name: "teleop/hand_pose",
+          qos_profile: "sensor_data",
+          message_format: {
+            position:     { $type: "array", $items: "f64", $length: 3 },
+            orientation:  { $type: "array", $items: "f64", $length: 4 },
+            gripper_open: "bool",
+            confidence:   "f64",
+            stamp:        "time"
+          }
+        }
+      ],
+      consumes: [
+        { local_node_id: "uvc_camera", name: "video_stream" }
+      ]
+    }
+  }
+}
