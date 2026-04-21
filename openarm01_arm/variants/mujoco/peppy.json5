@@ -6,7 +6,7 @@
     },
     parameters: {
       // The arm_id at runtime
-      arm_id: "u16"
+      arm_id: "u8"
     }
   }
 }
