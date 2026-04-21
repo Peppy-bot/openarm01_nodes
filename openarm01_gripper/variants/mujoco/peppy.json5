@@ -6,7 +6,7 @@
     },
     parameters: {
       // The gripper_id at runtime
-      gripper_id: "u8"
+      gripper_id: "u16"
     }
   }
 }
