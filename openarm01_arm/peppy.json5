@@ -71,7 +71,7 @@
                 $items: "f64",
                 $length: 3
               },
-              sim_time: "f64"
+              action_time: "f64"
             }
           },
           result_service: {
@@ -87,7 +87,7 @@
                 $items: "f64",
                 $length: 3
               },
-              sim_time: "f64"
+              action_time: "f64"
             }
           }
         }
