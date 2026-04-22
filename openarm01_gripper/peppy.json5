@@ -37,10 +37,9 @@
         {
           name: "move_gripper",
           goal_service: {
-            // TODO: Maybe add "feedback_frequency" to the request parameters here
             request_message_format: {
-              // The gripper ID to understand if it's left of right
-              gripper_id: "u8",
+              // The frequency in hertz at which the feedback is being sent
+              feedback_frequency: "u32",
               // x, y, z
               desired_position: {
                 $type: "array",
@@ -77,5 +76,16 @@
         }
       ]
     },
+    services: {
+      exposes: [
+        {
+          // Returns the runtime gripper_id set in `execution.parameters` (allows `openarm01_backbone` to differentiate between the grippers)
+          name: "get_gripper_id",
+          response_message_format: {
+            gripper_id: "u8"
+          }
+        }
+      ]
+    }
   },
 }

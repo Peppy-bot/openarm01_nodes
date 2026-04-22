@@ -31,6 +31,8 @@
       ]
     },
     variants: [
+      // If the backbone is abstracted away from real/sim because the other nodes already create this abstraction layer (`uvc_camera`/`openarm01_gripper`/`openarm01_arm`...),
+      // we might not need multiple variants here.
       {
         name: "default",
         source: {
@@ -113,5 +115,18 @@
         }
       ]
     },
+    services: {
+      // Get the list of instances at runtime from the caller with https://app.plane.so/peppy/browse/PEPPYOS-76/ and get the instance of all arms/grippers at runtime
+      consumes: [
+        {
+          local_node_id: "arm",
+          name: "get_arm_id",
+        },
+        {
+          local_node_id: "gripper",
+          name: "get_gripper_id",
+        },
+      ]
+    }
   },
 }

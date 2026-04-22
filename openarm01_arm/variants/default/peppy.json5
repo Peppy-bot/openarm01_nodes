@@ -6,6 +6,9 @@
     },
     parameters: {
       // The arm_id at runtime
+      // Depending on the ID, either 0 (left) or 1 (right), the instance sends commands to the joints on either the right or left arm
+      // If more than one instance with the same arm_id is detected at runtime, the new instance with the taken ID must crash. There should not be more than a single instance with the same ID running.
+      // For the locking mechanism we could use https://app.plane.so/peppy/browse/PEPPYOS-75/, if it's not yet implemented simply use a temporary named file (it's hacky tho as it assumes all the nodes run on the same filesystem).
       arm_id: "u8"
     }
   }
