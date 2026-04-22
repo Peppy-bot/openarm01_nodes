@@ -1,0 +1,22 @@
+[MAIN]
+ignore-paths = ^.*/vendor/.*,^.*/\.peppy/.*
+
+[MESSAGES CONTROL]
+disable =
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring
+    E0401,  # import-error (omni.*, peppylib unavailable on host)
+    E0611,  # no-name-in-module
+    I1101,  # c-extension-no-member
+    W1203,  # logging-fstring-interpolation (f-strings are intentional style)
+    C0415,  # import-outside-toplevel (deferred omni.* imports required by Isaac Sim load order)
+    W0718,  # broad-exception-caught (intentional robustness against Isaac Sim API failures)
+    R0801,  # duplicate-code
+    R0903   # too-few-public-methods
+
+[FORMAT]
+max-line-length = 88
+
+[DESIGN]
+max-attributes = 12
