@@ -61,8 +61,8 @@
           name: "move_arm",
           goal_service: {
             request_message_format: {
-              // The arm ID to understand if it's left of right
-              arm_id: "u8",
+              // The frequency in hertz at which the feedback is being sent
+              feedback_frequency: "u32",
               // x, y, z
               desired_position: {
                 $type: "array",
