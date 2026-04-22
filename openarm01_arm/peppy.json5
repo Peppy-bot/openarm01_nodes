@@ -37,10 +37,9 @@
         {
           name: "move_arm",
           goal_service: {
-            // TODO: Maybe add "feedback_frequency" to the request parameters here
             request_message_format: {
-              // The arm ID to understand if it's left of right
-              arm_id: "u8",
+              // The frequency in hertz at which the feedback is being sent
+              feedback_frequency: "u32",
               // x, y, z
               desired_position: {
                 $type: "array",
@@ -93,5 +92,16 @@
         }
       ]
     },
+    services: {
+      exposes: [
+        {
+          // Returns the runtime arm_id set in `execution.parameters` (allows `openarm01_backbone` to differentiate between the arms)
+          name: "get_arm_id",
+          response_message_format: {
+            arm_id: "u8"
+          }
+        }
+      ]
+    }
   },
 }
