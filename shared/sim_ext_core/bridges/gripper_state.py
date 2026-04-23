@@ -34,7 +34,7 @@ class GripperStateBridge(BridgePlugin):
                 "joint_names": data["joint_names"],
                 "positions": data["positions"],
                 "applied_forces": data["applied_forces"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

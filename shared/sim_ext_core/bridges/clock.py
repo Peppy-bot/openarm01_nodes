@@ -12,10 +12,12 @@ _DEFAULT_TOPIC = "clock"
 
 class ClockBridge(BridgePlugin):
 
-    def __init__(self, sensor: Any, config: Any, entry: Any = None) -> None:
+    def __init__(self, sensor: Any, config: Any, entry: Any) -> None:
+        if entry is None:
+            raise ValueError("ClockBridge requires a non-None entry with a topic field")
         self._sensor = sensor
         self._node_name: str = config.node_name
-        self._topic: str = entry.topic if entry is not None else _DEFAULT_TOPIC
+        self._topic: str = entry.topic
 
     def setup(self) -> bool:
         return self._sensor.setup()
@@ -31,7 +33,7 @@ class ClockBridge(BridgePlugin):
             {
                 "step": step,
                 "sim_time": data["sim_time"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

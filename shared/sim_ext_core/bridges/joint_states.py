@@ -34,7 +34,7 @@ class JointStatesBridge(BridgePlugin):
                 "step": step,
                 "positions": positions,
                 "velocities": velocities,
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

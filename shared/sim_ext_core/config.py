@@ -84,10 +84,8 @@ class BridgeConfig:
                     for e in raw.get("subscribers", [])
                 ],
             )
-        except (OSError, json.JSONDecodeError, KeyError) as exc:
-            logger.warning(
-                f"Could not load {resolved}: {exc} — falling back to env vars"
-            )
+        except (OSError, json.JSONDecodeError, KeyError):
+            logger.exception(f"Could not load {resolved} — falling back to env vars")
             return cls.from_env(default_node_name=default_node_name)
 
     @classmethod
@@ -144,8 +142,8 @@ def _read_daemon_state() -> dict[str, Any]:
             " — is the PeppyOS daemon running?"
         )
         return {}
-    except Exception as exc:
-        logger.error(f"Failed to read daemon_state.json: {exc}")
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to read daemon_state.json")
         return {}
 
 

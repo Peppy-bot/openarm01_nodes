@@ -35,7 +35,7 @@ class OdometryBridge(BridgePlugin):
                 "orientation": data["orientation"],
                 "linear_velocity": data["linear_velocity"],
                 "angular_velocity": data["angular_velocity"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

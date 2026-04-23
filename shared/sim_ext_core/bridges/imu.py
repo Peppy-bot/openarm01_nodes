@@ -34,7 +34,7 @@ class ImuBridge(BridgePlugin):
                 "orientation": data["orientation"],
                 "angular_velocity": data["angular_velocity"],
                 "linear_acceleration": data["linear_acceleration"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

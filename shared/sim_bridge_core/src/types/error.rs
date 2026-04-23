@@ -26,7 +26,15 @@ impl fmt::Display for BridgeError {
     }
 }
 
-impl std::error::Error for BridgeError {}
+impl std::error::Error for BridgeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ConfigNotFound { source, .. } => Some(source),
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for BridgeError {
     fn from(e: std::io::Error) -> Self {

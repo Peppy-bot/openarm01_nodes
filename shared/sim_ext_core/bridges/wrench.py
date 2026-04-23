@@ -33,7 +33,7 @@ class WrenchBridge(BridgePlugin):
                 "step": step,
                 "force": data["force"],
                 "torque": data["torque"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

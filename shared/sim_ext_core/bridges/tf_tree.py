@@ -40,7 +40,7 @@ class TfTreeBridge(BridgePlugin):
                     }
                     for f in frames
                 ],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)

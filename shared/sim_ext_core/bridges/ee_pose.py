@@ -33,7 +33,7 @@ class EePoseBridge(BridgePlugin):
                 "step": step,
                 "position": data["position"],
                 "orientation": data["orientation"],
-                "stamp": time.monotonic(),
+                "stamp": time.time(),
             }
         ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
