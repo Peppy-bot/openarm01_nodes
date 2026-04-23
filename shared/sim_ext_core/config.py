@@ -55,9 +55,7 @@ class BridgeConfig:
         path: Path | None = None,
         default_node_name: str = "sim",
     ) -> BridgeConfig:
-        resolved = path or Path(
-            os.environ.get(_ENV_CONFIG_PATH, _DEFAULT_CONFIG_PATH)
-        )
+        resolved = path or Path(os.environ.get(_ENV_CONFIG_PATH, _DEFAULT_CONFIG_PATH))
         try:
             raw = _read_json5(resolved)
             daemon_state = _read_daemon_state()
@@ -87,7 +85,9 @@ class BridgeConfig:
                 ],
             )
         except Exception as exc:
-            logger.warning(f"Could not load {resolved}: {exc} — falling back to env vars")
+            logger.warning(
+                f"Could not load {resolved}: {exc} — falling back to env vars"
+            )
             return cls.from_env(default_node_name=default_node_name)
 
     @classmethod
@@ -122,9 +122,16 @@ class BridgeConfig:
 def _resolve_port(daemon_state: dict[str, Any]) -> int:
     port_env = os.environ.get(_ENV_PORT, "").strip()
     try:
-        return int(port_env if port_env else daemon_state.get("messaging_port", _DEFAULT_MESSAGING_PORT))
+        return int(
+            port_env
+            if port_env
+            else daemon_state.get("messaging_port", _DEFAULT_MESSAGING_PORT)
+        )
     except (ValueError, TypeError):
-        logger.warning(f"Invalid {_ENV_PORT} '{port_env}' — using default {_DEFAULT_MESSAGING_PORT}")
+        logger.warning(
+            f"Invalid {_ENV_PORT} '{port_env}'"
+            f" — using default {_DEFAULT_MESSAGING_PORT}"
+        )
         return _DEFAULT_MESSAGING_PORT
 
 
@@ -132,7 +139,10 @@ def _read_daemon_state() -> dict[str, Any]:
     try:
         return json.loads(_DAEMON_STATE_PATH.read_text())
     except FileNotFoundError:
-        logger.warning(f"daemon_state.json not found at {_DAEMON_STATE_PATH} — is the PeppyOS daemon running?")
+        logger.warning(
+            f"daemon_state.json not found at {_DAEMON_STATE_PATH}"
+            " — is the PeppyOS daemon running?"
+        )
         return {}
     except Exception as exc:
         logger.error(f"Failed to read daemon_state.json: {exc}")
@@ -143,7 +153,10 @@ def _normalise_params(raw: Any, entry_type: str) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     if raw is not None:
-        logger.warning(f"Publisher entry '{entry_type}': params is {type(raw).__name__!r}, expected dict — using {{}}.")
+        logger.warning(
+            f"Publisher entry '{entry_type}': params is {type(raw).__name__!r},"
+            " expected dict — using {}."
+        )
     return {}
 
 

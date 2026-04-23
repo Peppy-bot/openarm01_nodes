@@ -27,13 +27,15 @@ class WrenchBridge(BridgePlugin):
         data = self._sensor.get_wrench_data()
         if data is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "force": data["force"],
-            "torque": data["torque"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "force": data["force"],
+                "torque": data["torque"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

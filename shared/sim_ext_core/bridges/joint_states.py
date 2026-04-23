@@ -28,13 +28,15 @@ class JointStatesBridge(BridgePlugin):
         if states is None:
             return
         positions, velocities = states
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "positions": positions,
-            "velocities": velocities,
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "positions": positions,
+                "velocities": velocities,
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

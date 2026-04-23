@@ -27,11 +27,13 @@ class ClockBridge(BridgePlugin):
         data = self._sensor.get_clock_data()
         if data is None:
             return
-        payload = json.dumps({
-            "step": step,
-            "sim_time": data["sim_time"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "step": step,
+                "sim_time": data["sim_time"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

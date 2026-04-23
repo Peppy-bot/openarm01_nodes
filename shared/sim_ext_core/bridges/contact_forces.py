@@ -27,20 +27,22 @@ class ContactForcesBridge(BridgePlugin):
         contacts = self._sensor.get_contact_data()
         if contacts is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "contacts": [
-                {
-                    "body1": c["body1"],
-                    "body2": c["body2"],
-                    "position": list(c["position"]),
-                    "force": list(c["force"]),
-                }
-                for c in contacts
-            ],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "contacts": [
+                    {
+                        "body1": c["body1"],
+                        "body2": c["body2"],
+                        "position": list(c["position"]),
+                        "force": list(c["force"]),
+                    }
+                    for c in contacts
+                ],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

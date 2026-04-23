@@ -27,20 +27,22 @@ class TfTreeBridge(BridgePlugin):
         frames = self._sensor.get_tf_data()
         if frames is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "frames": [
-                {
-                    "name": f["name"],
-                    "parent": f["parent"],
-                    "position": list(f["position"]),
-                    "orientation": list(f["orientation"]),
-                }
-                for f in frames
-            ],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "frames": [
+                    {
+                        "name": f["name"],
+                        "parent": f["parent"],
+                        "position": list(f["position"]),
+                        "orientation": list(f["orientation"]),
+                    }
+                    for f in frames
+                ],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

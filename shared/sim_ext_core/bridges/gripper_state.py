@@ -27,14 +27,16 @@ class GripperStateBridge(BridgePlugin):
         data = self._sensor.get_gripper_state()
         if data is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "joint_names": data["joint_names"],
-            "positions": data["positions"],
-            "applied_forces": data["applied_forces"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "joint_names": data["joint_names"],
+                "positions": data["positions"],
+                "applied_forces": data["applied_forces"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

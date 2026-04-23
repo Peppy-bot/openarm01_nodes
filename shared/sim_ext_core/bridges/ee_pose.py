@@ -27,13 +27,15 @@ class EePoseBridge(BridgePlugin):
         data = self._sensor.get_ee_pose()
         if data is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "position": data["position"],
-            "orientation": data["orientation"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "position": data["position"],
+                "orientation": data["orientation"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

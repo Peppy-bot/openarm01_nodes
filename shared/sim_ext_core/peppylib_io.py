@@ -74,6 +74,7 @@ class PeppylibIO:  # pylint: disable=R0902
 
     def stop(self) -> None:
         if self._loop is not None and not self._loop.is_closed():
+
             def _shutdown() -> None:
                 if self._stop_future is not None and not self._stop_future.done():
                     self._stop_future.cancel()
@@ -81,6 +82,7 @@ class PeppylibIO:  # pylint: disable=R0902
                     if not task.done():
                         task.cancel()
                 self._loop.stop()
+
             self._loop.call_soon_threadsafe(_shutdown)
 
         if self._thread is not None:
@@ -111,7 +113,11 @@ class PeppylibIO:  # pylint: disable=R0902
         with self._subs_lock:
             if entry not in self._all_subs:
                 self._all_subs.append(entry)
-            if self._loop is not None and not self._loop.is_closed() and self._ready.is_set():
+            if (
+                self._loop is not None
+                and not self._loop.is_closed()
+                and self._ready.is_set()
+            ):
                 schedule_now = True
             else:
                 self._pending_subs.append(entry)
@@ -153,7 +159,9 @@ class PeppylibIO:  # pylint: disable=R0902
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                logger.warning(f"peppylib connection error: {exc} — reconnecting in {backoff:.0f}s")
+                logger.warning(
+                    f"peppylib connection error: {exc} — reconnecting in {backoff:.0f}s"
+                )
                 self._handle = None
                 self._ready.clear()
                 await asyncio.sleep(backoff)
@@ -161,7 +169,10 @@ class PeppylibIO:  # pylint: disable=R0902
 
     async def _connect_and_run(self) -> None:
         cfg = self._config
-        logger.info(f"Connecting to PeppyOS daemon — host={cfg.host}  port={cfg.port}  daemon_node={cfg.daemon_node}")
+        logger.info(
+            f"Connecting to PeppyOS daemon — host={cfg.host}"
+            f"  port={cfg.port}  daemon_node={cfg.daemon_node}"
+        )
 
         # Cancel stale recv tasks from a previous connection attempt.
         for task in list(self._recv_tasks):
@@ -170,8 +181,8 @@ class PeppylibIO:  # pylint: disable=R0902
 
         self._handle = await MessengerHandle.from_host_port(cfg.host, cfg.port)
 
-        # On reconnect, all_subs covers previously registered subscriptions that
-        # pending_subs may have missed if they were registered before the loop was ready.
+        # On reconnect, all_subs covers subscriptions that pending_subs may have
+        # missed if they were registered before the loop was ready.
         with self._subs_lock:
             to_start: list[tuple[str, str, str]] = self._pending_subs[:]
             self._pending_subs.clear()
@@ -200,18 +211,25 @@ class PeppylibIO:  # pylint: disable=R0902
         finally:
             self._stop_future = None
 
-    async def _subscribe_with_retry(self, source_node: str, topic: str, qos: str) -> None:
+    async def _subscribe_with_retry(
+        self, source_node: str, topic: str, qos: str
+    ) -> None:
         backoff = 1.0
         while True:
             try:
                 sub = await self._subscribe_once(source_node, topic, qos)
                 await self._recv_loop((source_node, topic), sub)
-                logger.info(f"{source_node}/{topic} subscription closed — re-subscribing.")
+                logger.info(
+                    f"{source_node}/{topic} subscription closed — re-subscribing."
+                )
                 backoff = 1.0
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.warning(f"Subscribe error for {source_node}/{topic}: {exc} — retrying in {backoff:.0f}s")
+                logger.warning(
+                    f"Subscribe error for {source_node}/{topic}: {exc}"
+                    f" — retrying in {backoff:.0f}s"
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _SUBSCRIBE_MAX_BACKOFF_S)
 
@@ -220,7 +238,9 @@ class PeppylibIO:  # pylint: disable=R0902
             raise RuntimeError("No daemon handle — not connected.")
         qos_profile = _QOS_MAP.get(qos, QoSProfile.Standard)
         cfg = self._config
-        logger.info(f"Subscribing to {source_node}/{topic}  (daemon_node={cfg.daemon_node}).")
+        logger.info(
+            f"Subscribing to {source_node}/{topic}  (daemon_node={cfg.daemon_node})."
+        )
         return await TopicMessenger.subscribe(
             self._handle,
             cfg.daemon_node,

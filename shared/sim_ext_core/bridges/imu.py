@@ -27,14 +27,16 @@ class ImuBridge(BridgePlugin):
         data = self._sensor.get_imu_data()
         if data is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "orientation": data["orientation"],
-            "angular_velocity": data["angular_velocity"],
-            "linear_acceleration": data["linear_acceleration"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "orientation": data["orientation"],
+                "angular_velocity": data["angular_velocity"],
+                "linear_acceleration": data["linear_acceleration"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property

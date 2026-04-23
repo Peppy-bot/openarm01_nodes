@@ -27,15 +27,17 @@ class OdometryBridge(BridgePlugin):
         data = self._sensor.get_odometry_data()
         if data is None:
             return
-        payload = json.dumps({
-            "robot": self._robot_name,
-            "step": step,
-            "position": data["position"],
-            "orientation": data["orientation"],
-            "linear_velocity": data["linear_velocity"],
-            "angular_velocity": data["angular_velocity"],
-            "stamp": time.monotonic(),
-        }).encode()
+        payload = json.dumps(
+            {
+                "robot": self._robot_name,
+                "step": step,
+                "position": data["position"],
+                "orientation": data["orientation"],
+                "linear_velocity": data["linear_velocity"],
+                "angular_velocity": data["angular_velocity"],
+                "stamp": time.monotonic(),
+            }
+        ).encode()
         io.emit(self._node_name, self._topic, _QOS, payload)
 
     @property
