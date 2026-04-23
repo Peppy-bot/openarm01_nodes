@@ -25,7 +25,7 @@ class TfTreeBridge(BridgePlugin):
 
     def on_step(self, step: int, io: Any) -> None:
         frames = self._sensor.get_tf_data()
-        if frames is None:
+        if not frames:
             return
         payload = json.dumps(
             {

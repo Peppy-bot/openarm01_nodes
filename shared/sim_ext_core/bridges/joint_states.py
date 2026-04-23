@@ -21,7 +21,7 @@ class JointStatesBridge(BridgePlugin):
         return self._articulation.setup()
 
     def teardown(self) -> None:
-        pass
+        pass  # articulation lifecycle is managed by the extension, not the plugin
 
     def on_step(self, step: int, io: Any) -> None:
         states = self._articulation.get_joint_states()

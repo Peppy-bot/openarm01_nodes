@@ -81,7 +81,6 @@ class PeppylibIO:  # pylint: disable=R0902
                 for task in self._recv_tasks:
                     if not task.done():
                         task.cancel()
-                self._loop.stop()
 
             self._loop.call_soon_threadsafe(_shutdown)
 

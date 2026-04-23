@@ -25,7 +25,7 @@ class ContactForcesBridge(BridgePlugin):
 
     def on_step(self, step: int, io: Any) -> None:
         contacts = self._sensor.get_contact_data()
-        if contacts is None:
+        if not contacts:
             return
         payload = json.dumps(
             {

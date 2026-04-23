@@ -20,7 +20,7 @@ _ENV_ROBOT_NAME = "PEPPY_BRIDGE_ROBOT_NAME"
 _ENV_STATES_TOPIC = "PEPPY_BRIDGE_STATES_TOPIC"
 _ENV_COMMAND_TOPIC = "PEPPY_BRIDGE_COMMAND_TOPIC"
 _ENV_COMMAND_SOURCE_NODE = "PEPPY_BRIDGE_COMMAND_SOURCE_NODE"
-_DEFAULT_CONFIG_PATH = "/nodes/sim_bridge/config/sim_bridge.json5"
+_DEFAULT_CONFIG_PATH = "config/sim_bridge.json5"
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class BridgeConfig:
     ) -> BridgeConfig:
         resolved = path or Path(os.environ.get(_ENV_CONFIG_PATH, _DEFAULT_CONFIG_PATH))
         try:
-            raw = _read_json5(resolved)
+            raw = _read_jsonc(resolved)
             daemon_state = _read_daemon_state()
             return cls(
                 node_name=os.environ.get(_ENV_NODE_NAME, default_node_name),
@@ -84,7 +84,7 @@ class BridgeConfig:
                     for e in raw.get("subscribers", [])
                 ],
             )
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
             logger.warning(
                 f"Could not load {resolved}: {exc} — falling back to env vars"
             )
@@ -160,7 +160,8 @@ def _normalise_params(raw: Any, entry_type: str) -> dict[str, Any]:
     return {}
 
 
-def _read_json5(path: Path) -> dict[str, Any]:
+def _read_jsonc(path: Path) -> dict[str, Any]:
+    """Parses JSON with full-line // comments only. Inline comments not supported."""
     lines = path.read_text().splitlines()
     stripped = "\n".join(line for line in lines if not line.strip().startswith("//"))
     return json.loads(stripped)

@@ -12,7 +12,7 @@ _DEFAULT_TOPIC = "clock"
 
 class ClockBridge(BridgePlugin):
 
-    def __init__(self, sensor: Any, config: Any, entry: Any) -> None:
+    def __init__(self, sensor: Any, config: Any, entry: Any = None) -> None:
         self._sensor = sensor
         self._node_name: str = config.node_name
         self._topic: str = entry.topic if entry is not None else _DEFAULT_TOPIC
