@@ -26,6 +26,7 @@ impl ArmMergeState {
     }
 
     pub fn update_and_merge(&self, indices: &[usize], positions: &[f64]) -> Vec<f64> {
+        debug_assert_eq!(indices.len(), positions.len(), "indices and positions length mismatch");
         let mut state = self.inner.lock().expect("arm merge state poisoned");
         for (&idx, &pos) in indices.iter().zip(positions.iter()) {
             if idx < self.total_joints {
@@ -90,8 +91,9 @@ impl<R: Clone + Send + Sync + 'static> SimBridge<R> {
     }
 
     pub async fn run(self) {
-        for pipeline in self.pipelines {
-            tokio::spawn(pipeline);
+        let handles: Vec<_> = self.pipelines.into_iter().map(tokio::spawn).collect();
+        for handle in handles {
+            let _ = handle.await;
         }
     }
 }

@@ -114,6 +114,10 @@ pub fn resolve_joint_indices(
                 })
             })
             .collect()
+    } else if sub.joint_start.is_none() && sub.joint_count.is_none() {
+        Err(BridgeError::JointResolution(
+            "subscriber has no joint_names, joint_start, or joint_count in config".into(),
+        ))
     } else {
         let start = sub.joint_start.unwrap_or(0);
         let count = sub.joint_count.unwrap_or(0);

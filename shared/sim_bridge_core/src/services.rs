@@ -58,6 +58,7 @@ pub async fn call_sim(
         .map_err(|e| format!("deserialize response: {e}"))
 }
 
+/// Requires a multi-threaded Tokio runtime (`flavor = "multi_thread"`). Panics on current_thread.
 pub fn call_sim_sync(
     daemon: &DaemonState,
     sim_node: &str,

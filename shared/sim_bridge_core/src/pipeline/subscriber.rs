@@ -52,8 +52,8 @@ pub async fn run_os_to_sim<R, M, F, Fut, E>(
                     let (_sender, msg) = match result {
                         Ok(m) => m,
                         Err(e) => {
-                            tracing::warn!("os_to_sim({topic}): receive — {e}");
-                            continue;
+                            tracing::warn!("os_to_sim({topic}): receive — {e}, reconnecting");
+                            break;
                         }
                     };
 
