@@ -1,0 +1,19 @@
+[core]
+reloadable = true
+order = 0
+
+[package]
+version = "0.1.0"
+category = "Simulation"
+title = "Peppy Backbone"
+description = "Read-only peppylib sensor bridge between Isaac Sim and PeppyOS for openarm01_backbone."
+authors = ["Peppy Robotics"]
+
+[dependencies]
+"omni.physx" = {}
+"omni.timeline" = {}
+"omni.usd" = {}
+"isaacsim.sensors.physics" = {}
+
+[[python.module]]
+name = "omni.peppy.backbone"
