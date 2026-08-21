@@ -265,7 +265,7 @@ pub async fn run(
         governed_grippers = governed.grippers;
 
         // Publish one governed setpoint per arm on its pairing slot; the slot
-        // scopes the stream to its paired arm, so the message carries no arm_id.
+        // scopes the stream to its paired arm, so the message names no side.
         for (planner, filters, wire, prev_q, governed_q, admission) in [
             (
                 &mut planners.left,
@@ -301,8 +301,8 @@ pub async fn run(
 
         // Publish each active side's governed opening fraction on its pairing
         // slot (the slot scopes the stream to its paired gripper, so the message
-        // carries no gripper_id); an idle side stays silent and its gripper
-        // holds the grippers.
+        // names no side); an idle side stays silent and its gripper holds its
+        // opening.
         for (wire, gripper_frac, target) in [
             (
                 &publishers.gripper_setpoints.left,

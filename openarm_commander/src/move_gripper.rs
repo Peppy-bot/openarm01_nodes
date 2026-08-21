@@ -48,7 +48,7 @@ async fn run(
     info!(side = label, opening, max_effort, "fire move_gripper");
 
     let goal = limb_motion_move_gripper::GoalRequest {
-        gripper_id: side.gripper_id(),
+        gripper_name: side.gripper_name().to_string(),
         opening,
         max_effort,
     };

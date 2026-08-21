@@ -24,8 +24,8 @@
       { name: "postures", tag: "v1", link_id: "postures" },
       // The per-limb moves: one arm to a joint target or a grasp-point pose
       // (run by that arm's planner), one gripper to an opening (run by the
-      // coordinator). arm_id and gripper_id name the side: 0 = left,
-      // 1 = right.
+      // coordinator). arm_name and gripper_name address the side: left_arm /
+      // right_arm and left_gripper / right_gripper.
       { name: "limb_motion", tag: "v1", link_id: "limb_motion" },
     ],
     depends_on: {
@@ -56,7 +56,7 @@
         // role, streams the governed joint setpoint down each slot's
         // joint_setpoints, and reads that arm's measured state back on the slot's
         // joint_states (the governor's d_now and the trajectory anchor); the slot
-        // scopes both directions, so no arm_id demux and no other producer can
+        // scopes both directions, so no per-side demux and no other producer can
         // drive an arm or pose as its state. Optional like the gripper slots
         // below, established at this instance's start (launcher `links:`).
         { name: "joint_link", tag: "v1", role: "leader", link_id: "left_arm_link", optional: true },
@@ -65,7 +65,7 @@
         // leader role, streams the governed opening down each slot's
         // gripper_setpoints, and reads that gripper's measured aperture back on
         // the slot's gripper_states; the slot scopes both directions, so no
-        // gripper_id demux and no other producer can pose as the fingers.
+        // per-side demux and no other producer can pose as the fingers.
         // Optional: the backbone boots with either gripper unpaired (that side's
         // governed openings go nowhere and no aperture arrives, so streaming
         // stays gated) and each pair is established at this instance's start
@@ -78,7 +78,7 @@
   interfaces: {
     actions: {
       // The backbone's move actions: the per-arm and gripper moves are
-      // addressed by side id, the posture moves take the whole robot. The
+      // addressed by side name, the posture moves take the whole robot. The
       // backbone runs each move itself (trajectory + governor + governed
       // stream); progress is observed on the state streams. Discrete goals
       // that return a result, distinct from the streamed setpoints on the

@@ -55,9 +55,10 @@ pub fn pose_from_wire(
 /// One joint-space vector (positions, velocities, or torques), j1..j7.
 pub type JointVec = [f64; ARM_DOF];
 
-/// Which arm a message addresses. The wire encodes it as `arm_id` (0 = left,
-/// 1 = right); [`Side::from_arm_id`] parses that at the boundary so the rest of
-/// the backbone carries a side it cannot get wrong, never a raw `u8`.
+/// Which arm a message addresses. The wire carries the limb's name
+/// ("left_arm" / "right_arm"); [`Side::from_arm_name`] parses that at the
+/// boundary so the rest of the backbone carries a side it cannot get wrong,
+/// never a raw string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
     Left,
@@ -65,32 +66,46 @@ pub enum Side {
 }
 
 impl Side {
-    /// Parse a wire `arm_id` (0 = left, 1 = right), or `None` if out of range.
-    pub fn from_arm_id(arm_id: u8) -> Option<Self> {
-        match arm_id {
-            0 => Some(Side::Left),
-            1 => Some(Side::Right),
+    /// This robot's arm names in their fixed left-then-right order: the wire
+    /// values limb_motion goals carry and limb_state's arm_names reports.
+    pub const ARM_NAMES: [&'static str; 2] = ["left_arm", "right_arm"];
+
+    /// This robot's gripper names, same order and role as [`Self::ARM_NAMES`].
+    pub const GRIPPER_NAMES: [&'static str; 2] = ["left_gripper", "right_gripper"];
+
+    /// Refusal for a goal naming no arm of this robot.
+    pub const UNKNOWN_ARM_NAME: &'static str =
+        r#"unknown arm_name: this robot's arms are "left_arm" and "right_arm""#;
+
+    /// Refusal for a goal naming no gripper of this robot.
+    pub const UNKNOWN_GRIPPER_NAME: &'static str =
+        r#"unknown gripper_name: this robot's grippers are "left_gripper" and "right_gripper""#;
+
+    /// Parse a wire `arm_name`, or `None` for a name not in [`Self::ARM_NAMES`].
+    pub fn from_arm_name(arm_name: &str) -> Option<Self> {
+        match arm_name {
+            "left_arm" => Some(Side::Left),
+            "right_arm" => Some(Side::Right),
             _ => None,
         }
     }
 
-    /// The wire `arm_id` (0 = left, 1 = right).
-    pub fn arm_id(self) -> u8 {
-        match self {
-            Side::Left => 0,
-            Side::Right => 1,
+    /// Parse a wire `gripper_name`, or `None` for a name not in
+    /// [`Self::GRIPPER_NAMES`].
+    pub fn from_gripper_name(gripper_name: &str) -> Option<Self> {
+        match gripper_name {
+            "left_gripper" => Some(Side::Left),
+            "right_gripper" => Some(Side::Right),
+            _ => None,
         }
-    }
-
-    /// Parse a wire `gripper_id` (0 = left, 1 = right), or `None` if out of range.
-    /// The gripper wire uses the same 0/1 encoding as the arm.
-    pub fn from_gripper_id(gripper_id: u8) -> Option<Self> {
-        Self::from_arm_id(gripper_id)
     }
 
     /// Index into a left-then-right `[T; 2]`.
     pub fn index(self) -> usize {
-        self.arm_id() as usize
+        match self {
+            Side::Left => 0,
+            Side::Right => 1,
+        }
     }
 
     /// Label for logs.
@@ -105,6 +120,27 @@ impl Side {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pins the name tables to the parsers: a name the tables advertise (on
+    // limb_state's arm_names/gripper_names) must parse back to its side, and
+    // a foreign name must be refused, not misrouted.
+    #[test]
+    fn advertised_names_parse_and_foreign_names_refuse() {
+        assert_eq!(Side::from_arm_name(Side::ARM_NAMES[0]), Some(Side::Left));
+        assert_eq!(Side::from_arm_name(Side::ARM_NAMES[1]), Some(Side::Right));
+        assert_eq!(
+            Side::from_gripper_name(Side::GRIPPER_NAMES[0]),
+            Some(Side::Left)
+        );
+        assert_eq!(
+            Side::from_gripper_name(Side::GRIPPER_NAMES[1]),
+            Some(Side::Right)
+        );
+        assert_eq!(Side::from_arm_name("left_gripper"), None);
+        assert_eq!(Side::from_gripper_name("left_arm"), None);
+        assert_eq!(Side::from_arm_name("LEFT_ARM"), None);
+        assert_eq!(Side::from_arm_name(""), None);
+    }
 
     // Pins the outbound wire ordering to the inbound one: a scalar-first slip
     // on either side breaks the round trip.

@@ -357,7 +357,7 @@ async fn move_arm_joints_streams_a_trajectory_the_arm_follows_to_the_target() ->
     let goal = move_arm_joints::send_goal(
         &harness,
         &move_arm_joints::GoalRequestData {
-            arm_id: 0,
+            arm_name: "left_arm".to_string(),
             joint_positions: target,
             duration_s: 1.0,
         },
@@ -531,4 +531,71 @@ async fn a_closing_command_inside_d_stop_reads_stopped_on_collision_status() -> 
     }
 
     harness.shutdown().await
+}
+
+/// A goal naming no limb of this robot is refused at admission with the name
+/// table quoted, for the arm and gripper moves alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn goals_for_unknown_limb_names_are_refused() -> peppygen::Result<()> {
+    use peppygen::fixtures::exposed_actions::limb_motion::{move_arm_joints, move_gripper};
+
+    let (harness, mocks) = start_ready_vacant(params()).await?;
+    pump_is_ready(
+        mocks.deps.robot_init.is_ready,
+        Arc::new(AtomicBool::new(true)),
+    );
+    pump_arm_at_home!(
+        mocks.pairings.left_arm_link.joint_states,
+        peppygen::paired_topics::left_arm_link::joint_states
+    );
+    pump_right_arm_and_grippers!(mocks);
+
+    // Wait for streaming so the refusal below is the name check, not the
+    // seed gate's blanket refusal.
+    let mut right_wire = mocks.pairings.right_arm_link.joint_setpoints;
+    tokio::time::timeout(DEADLINE, right_wire.next())
+        .await
+        .expect("streaming never began")?
+        .expect("right arm subscription open");
+
+    let goal = move_arm_joints::send_goal(
+        &harness,
+        &move_arm_joints::GoalRequestData {
+            arm_name: "torso".to_string(),
+            joint_positions: HOME,
+            duration_s: 1.0,
+        },
+        peppygen::QoSProfile::Reliable,
+        DEADLINE,
+    )
+    .await?;
+    assert!(!goal.accepted, "a goal for \"torso\" must be refused");
+    assert_eq!(
+        goal.reason.as_deref(),
+        Some(r#"unknown arm_name: this robot's arms are "left_arm" and "right_arm""#)
+    );
+
+    // A gripper goal addressed with an ARM name is a mixup, not a gripper.
+    let goal = move_gripper::send_goal(
+        &harness,
+        &move_gripper::GoalRequestData {
+            gripper_name: "left_arm".to_string(),
+            opening: 0.5,
+            max_effort: 0.0,
+        },
+        peppygen::QoSProfile::Reliable,
+        DEADLINE,
+    )
+    .await?;
+    assert!(
+        !goal.accepted,
+        "a gripper goal for \"left_arm\" must be refused"
+    );
+    assert_eq!(
+        goal.reason.as_deref(),
+        Some(
+            r#"unknown gripper_name: this robot's grippers are "left_gripper" and "right_gripper""#
+        )
+    );
+    Ok(())
 }

@@ -118,13 +118,14 @@ field pose.
 
 | Action | Goal | Refused when |
 |---|---|---|
-| `move_arm_joints` | `arm_id`, 7 joint positions (rad), `duration_s` (the limb_motion contract) | non-finite, negative duration, out of joint limits, side busy |
-| `move_arm` | `arm_id`, world pose (position m + quaternion `[x, y, z, w]`), `duration_s` (the limb_motion contract) | non-finite, degenerate quaternion, negative duration, side busy |
-| `move_gripper` | `gripper_id`, opening fraction in [0, 1], `max_effort` (the limb_motion contract) | non-finite, out of range, negative effort cap, side busy |
+| `move_arm_joints` | `arm_name`, 7 joint positions (rad), `duration_s` (the limb_motion contract) | non-finite, negative duration, out of joint limits, side busy |
+| `move_arm` | `arm_name`, world pose (position m + quaternion `[x, y, z, w]`), `duration_s` (the limb_motion contract) | non-finite, degenerate quaternion, negative duration, side busy |
+| `move_gripper` | `gripper_name`, opening fraction in [0, 1], `max_effort` (the limb_motion contract) | non-finite, out of range, negative effort cap, side busy |
 | `move_to_ready` | `duration_s` (the postures contract; both arms to the Ready posture) | non-finite, negative duration, over 600 s, either arm busy |
 | `move_to_home` | `duration_s` (the postures contract; both arms to the Home rest) | non-finite, negative duration, over 600 s, either arm busy |
 
-`arm_id`/`gripper_id`: 0 = left, 1 = right. Every world pose here, commanded or
+`arm_name`/`gripper_name`: `left_arm`/`right_arm` and `left_gripper`/`right_gripper`,
+an unknown name refused in the result. Every world pose here, commanded or
 reported, is the gripper's **grasp point** (midway between the pads on the jaw
 closing axis, `+z` out of the gripper), not the wrist flange they mount on:
 `openarm_description` carries the offset per generation and `arm_model` builds
