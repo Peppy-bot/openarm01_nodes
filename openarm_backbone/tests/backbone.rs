@@ -508,7 +508,12 @@ async fn a_closing_command_inside_d_stop_reads_stopped_on_collision_status() -> 
     let deadline = tokio::time::Instant::now() + DEADLINE;
     publish_commands().await?;
     loop {
-        match tokio::time::timeout(READ_WINDOW, harness.emitted.collision_status.next()).await {
+        match tokio::time::timeout(
+            READ_WINDOW,
+            harness.emitted.collision_status_collision_status.next(),
+        )
+        .await
+        {
             Ok(status) => {
                 let status = status?.expect("collision_status subscription open");
                 assert!(status.distance.is_finite());
@@ -531,6 +536,52 @@ async fn a_closing_command_inside_d_stop_reads_stopped_on_collision_status() -> 
     }
 
     harness.shutdown().await
+}
+
+/// The whole-robot limb_state readout: with every follower live (both arms at
+/// [`HOME`], both grippers half open), the emitted snapshot names both limbs,
+/// slices per the contract's rule, and carries the measured values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn limb_states_snapshots_carry_names_counts_and_measured_state() -> peppygen::Result<()> {
+    let (mut harness, mocks) = start_ready_vacant(params()).await?;
+    pump_is_ready(
+        mocks.deps.robot_init.is_ready,
+        Arc::new(AtomicBool::new(true)),
+    );
+    pump_arm_at_home!(
+        mocks.pairings.left_arm_link.joint_states,
+        peppygen::paired_topics::left_arm_link::joint_states
+    );
+    pump_right_arm_and_grippers!(mocks);
+
+    let snapshot = tokio::time::timeout(DEADLINE, harness.emitted.limb_state_limb_states.next())
+        .await
+        .expect("no limb_states snapshot before the deadline")?
+        .expect("limb_states subscription open");
+
+    assert_eq!(snapshot.arm_names, ["left_arm", "right_arm"]);
+    assert_eq!(snapshot.joints_per_arm, [7, 7]);
+    assert_eq!(snapshot.joint_positions.len(), 14);
+    // Both arms park at HOME, so each 7-entry slice echoes the pumps.
+    for (i, v) in snapshot.joint_positions.iter().enumerate() {
+        assert!(
+            (v - HOME[i % 7]).abs() < 1e-9,
+            "joint_positions[{i}] = {v}, pumped {}",
+            HOME[i % 7]
+        );
+    }
+    assert_eq!(snapshot.positions.len(), 6, "3 per arm");
+    assert_eq!(snapshot.orientations.len(), 8, "4 per arm");
+    for (arm, quat) in snapshot.orientations.chunks(4).enumerate() {
+        let norm = quat.iter().map(|v| v * v).sum::<f64>().sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-6,
+            "arm {arm} orientation is not a unit quaternion (norm {norm})"
+        );
+    }
+    assert_eq!(snapshot.gripper_names, ["left_gripper", "right_gripper"]);
+    assert_eq!(snapshot.gripper_openings, [0.5, 0.5]);
+    Ok(())
 }
 
 /// A goal naming no limb of this robot is refused at admission with the name

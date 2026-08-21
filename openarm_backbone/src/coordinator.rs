@@ -32,7 +32,7 @@ use crate::governor::{GovState, Governor, Guard};
 use crate::liveness::{self, Admission, Liveness};
 use crate::motion::{MOTION_TIMEOUT_FACTOR, MoveBudget};
 use crate::planner::{self, BusyGuard, Goal, Planner};
-use crate::publish::Publishers;
+use crate::publish::{LimbStateSnapshot, Publishers};
 use crate::streams::{ArmState, GovernorConfig, GripperCommand, GripperState};
 use crate::types::{ARM_DOF, JointVec, Side};
 use crate::upstream::{Upstream, UpstreamMode};
@@ -330,22 +330,32 @@ pub async fn run(
         )
         .await;
 
-        // Operator proximity readout (rate-limited): the nearest checked pair's
-        // signed distance and link names, live regardless of the governor state,
-        // plus the governor's current disposition of the commanded motion.
-        if tick.is_multiple_of(readout_every)
-            && let Some(p) = governor.proximity(&prev)
-        {
-            let guard = governor.guard();
-            publishers
-                .send_status(
-                    p.distance,
-                    p.link_a,
-                    p.link_b,
-                    guard == Guard::Throttling,
-                    guard == Guard::Stopped,
-                )
-                .await;
+        // Operator readouts (rate-limited), sharing one cadence: the proximity
+        // feed and the whole-robot state snapshot.
+        if tick.is_multiple_of(readout_every) {
+            // The nearest checked pair's signed distance and link names, live
+            // regardless of the governor state, plus the governor's current
+            // disposition of the commanded motion.
+            if let Some(p) = governor.proximity(&prev) {
+                let guard = governor.guard();
+                publishers
+                    .send_status(
+                        p.distance,
+                        p.link_a,
+                        p.link_b,
+                        guard == Guard::Throttling,
+                        guard == Guard::Stopped,
+                    )
+                    .await;
+            }
+            // Published only while every limb has a live measurement, so a
+            // reader never sees a snapshot the backbone has stopped vouching
+            // for; a silent stretch reads as staleness on the consumer's side.
+            if let Some(snapshot) =
+                limb_state_snapshot(&channels, &mut planners, arm_admission, gripper_admission)
+            {
+                publishers.send_limb_states(&snapshot).await;
+            }
         }
         tick += 1;
         tokio::select! {
@@ -515,6 +525,34 @@ fn measured_config(
     )
 }
 
+/// A stale side reads as nothing to report, whatever the measurement is.
+fn live<T>(admission: Admission, read: impl FnOnce() -> Option<T>) -> Option<T> {
+    (admission != Admission::Stale).then(read).flatten()
+}
+
+/// Gather one whole-robot snapshot for the limb_state readout: every limb's
+/// live measurement, the arms' grasp-point poses FK'd from those joints. Any
+/// stale or missing limb yields `None`: a partial robot is not a snapshot.
+fn limb_state_snapshot(
+    channels: &ArmPair<ArmChannels>,
+    planners: &mut ArmPair<Planner>,
+    arm_admission: ArmPair<Admission>,
+    gripper_admission: ArmPair<Admission>,
+) -> Option<LimbStateSnapshot> {
+    let left = live(arm_admission.left, || *channels.left.measured.borrow())?;
+    let right = live(arm_admission.right, || *channels.right.measured.borrow())?;
+    let left_gripper = live(gripper_admission.left, || *channels.left.gripper.borrow())?;
+    let right_gripper = live(gripper_admission.right, || *channels.right.gripper.borrow())?;
+    Some(LimbStateSnapshot {
+        joints: ArmPair::new(left.positions, right.positions),
+        poses: ArmPair::new(
+            planners.left.ee_pose_world(&left.positions),
+            planners.right.ee_pose_world(&right.positions),
+        ),
+        openings: ArmPair::new(left_gripper.fraction, right_gripper.fraction),
+    })
+}
+
 /// Relay every limb's measured state up its leader pairing slot, so the
 /// leading node sees the same back-channel a follower gives the backbone. A
 /// stale side's arm relay goes silent with its setpoint stream:
@@ -530,10 +568,6 @@ async fn relay_upstream(
     gripper_admission: ArmPair<Admission>,
     upstream_mode: UpstreamMode,
 ) {
-    // A stale side reads as nothing to relay, whatever the measurement is.
-    fn live<T>(admission: Admission, read: impl FnOnce() -> Option<T>) -> Option<T> {
-        (admission != Admission::Stale).then(read).flatten()
-    }
     let arms = ArmPair::new(
         live(arm_admission.left, || *channels.left.measured.borrow()),
         live(arm_admission.right, || *channels.right.measured.borrow()),

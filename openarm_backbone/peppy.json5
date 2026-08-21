@@ -19,14 +19,20 @@
     name: "openarm_backbone",
     tag: "v1",
     implements: [
-      // The whole-robot posture moves: both arms to Ready or Home through
-      // the same admission and planner path as move_arm_joints.
-      { name: "postures", tag: "v1", link_id: "postures" },
+      // Whole-robot state snapshots for consumers that hold no pairing:
+      // joint positions, grasp-point poses, and gripper openings.
+      { name: "limb_state", tag: "v1", link_id: "limb_state" },
       // The per-limb moves: one arm to a joint target or a grasp-point pose
       // (run by that arm's planner), one gripper to an opening (run by the
       // coordinator). arm_name and gripper_name address the side: left_arm /
       // right_arm and left_gripper / right_gripper.
       { name: "limb_motion", tag: "v1", link_id: "limb_motion" },
+      // The governor proximity readout, published for any consumer that
+      // binds the capability (the panel's readout, an MCP resource).
+      { name: "collision_status", tag: "v1", link_id: "collision_status" },
+      // The whole-robot posture moves: both arms to Ready or Home through
+      // the same admission and planner path as move_arm_joints.
+      { name: "postures", tag: "v1", link_id: "postures" },
     ],
     depends_on: {
       contracts: [
@@ -129,25 +135,9 @@
         // upstream_mode "pose".
         { link_id: "leader_left_arm_pose", name: "pose_states" },
         { link_id: "leader_right_arm_pose", name: "pose_states" },
-        {
-          // Nearest self-collision pair: the signed surface distance between the
-          // two arms and the two links forming that pair.
-          name: "collision_status",
-          qos_profile: "sensor_data",
-          message_format: {
-            // Signed surface distance (m) of the nearest checked pair: positive is
-            // clearance, negative is penetration depth.
-            distance: "f64",
-            // The two links forming that nearest pair.
-            link_a: "string",
-            link_b: "string",
-            // Disposition of the commanded motion, mutually exclusive: throttled
-            // means it is being scaled down to hold the band, stopped means it is
-            // fully denied at the stop floor. Both false when motion is unrestricted.
-            throttled: "bool",
-            stopped: "bool"
-          }
-        },
+        // The contract-backed readouts; formats come from the contracts.
+        { link_id: "collision_status", name: "collision_status" },
+        { link_id: "limb_state", name: "limb_states" },
       ],
       consumes: [
         // The counterpart-role topic of each pairing slot: the measured state

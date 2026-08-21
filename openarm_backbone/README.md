@@ -13,8 +13,8 @@ the launcher decides what pairs into each slot.
         leader_left_gripper . leader_right_gripper     [either mode]
  (streams in)  joint_ or pose_setpoints  |  gripper_setpoints  [pairing slots, leading node]
                            v             v
- collision_ctrl --> +--------------------------------+ --> collision_status (readout topic)
- (governor_control) |          coordinator           |
+ collision_ctrl --> +--------------------------------+ --> collision_status, limb_states
+ (governor_control) |          coordinator           |     (readout topics)
  move_arm[_joints]  |  planners --> GOVERNOR --> pub |
  move_gripper ----> |  (per arm)    (16 DOF)         |
                     +--------------------------------+

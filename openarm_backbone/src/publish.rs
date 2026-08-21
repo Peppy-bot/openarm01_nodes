@@ -19,7 +19,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use peppygen::NodeRunner;
-use peppygen::emitted_topics::collision_status;
+use peppygen::emitted_topics::collision_status::collision_status;
+use peppygen::emitted_topics::limb_state::limb_states;
 use peppygen::paired_topics::{
     leader_left_arm, leader_left_arm_pose, leader_left_gripper, leader_right_arm,
     leader_right_arm_pose, leader_right_gripper, left_arm_link, left_gripper_link, right_arm_link,
@@ -31,7 +32,7 @@ use tracing::{error, warn};
 
 use crate::arm_pair::ArmPair;
 use crate::streams::{GripperState, warn_throttled};
-use crate::types::{JointVec, world_pose_arrays};
+use crate::types::{ARM_DOF, JointVec, Side, world_pose_arrays};
 
 /// Pairing timestamp from the daemon-resolved clock (sim time under a simulated
 /// clock), so consumers age samples on the same timeline they read. Errors
@@ -54,6 +55,32 @@ type ApertureBuild = fn(SystemTime, f64, f64, f64) -> peppygen::Result<Payload>;
 
 /// A world-frame end-effector pose: position and scalar-last quaternion.
 type PoseBuild = fn(SystemTime, [f64; 3], [f64; 4]) -> peppygen::Result<Payload>;
+
+/// The governor proximity readout: nearest-pair distance and links, plus the
+/// disposition of the commanded motion.
+type StatusBuild = fn(SystemTime, f64, String, String, bool, bool) -> peppygen::Result<Payload>;
+
+/// The whole-robot state snapshot: the name tables and the per-limb arrays,
+/// flattened per the limb_state contract's slicing rule.
+type LimbStateBuild = fn(
+    SystemTime,
+    Vec<String>,
+    Vec<u32>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<String>,
+    Vec<f64>,
+) -> peppygen::Result<Payload>;
+
+/// One whole-robot state snapshot, gathered by the coordinator at the readout
+/// cadence: every limb's measured joints, grasp-point pose, and gripper
+/// opening, left-then-right like every [`ArmPair`].
+pub struct LimbStateSnapshot {
+    pub joints: ArmPair<JointVec>,
+    pub poses: ArmPair<Isometry3<f64>>,
+    pub openings: ArmPair<f64>,
+}
 
 /// One outbound slot: its declared publisher, that slot's generated
 /// `build_message`, and the phrase naming it in a log line.
@@ -138,6 +165,46 @@ impl Publisher<ApertureBuild> {
     }
 }
 
+impl Publisher<StatusBuild> {
+    /// Publish the governor proximity readout.
+    pub async fn send(
+        &self,
+        distance: f64,
+        link_a: String,
+        link_b: String,
+        throttling: bool,
+        stopped: bool,
+    ) {
+        self.emit(|timestamp| {
+            (self.build)(timestamp, distance, link_a, link_b, throttling, stopped)
+        })
+        .await;
+    }
+}
+
+impl Publisher<LimbStateBuild> {
+    /// Publish one whole-robot snapshot, flattened per the contract's slicing
+    /// rule: joint vectors concatenated in arm order, poses at fixed 3- and
+    /// 4-strides, the name tables labelling every index.
+    pub async fn send(&self, s: &LimbStateSnapshot) {
+        let (left_position, left_orientation) = world_pose_arrays(&s.poses.left);
+        let (right_position, right_orientation) = world_pose_arrays(&s.poses.right);
+        self.emit(move |timestamp| {
+            (self.build)(
+                timestamp,
+                Side::ARM_NAMES.map(String::from).to_vec(),
+                vec![ARM_DOF as u32; 2],
+                [s.joints.left, s.joints.right].concat(),
+                [left_position, right_position].concat(),
+                [left_orientation, right_orientation].concat(),
+                Side::GRIPPER_NAMES.map(String::from).to_vec(),
+                vec![s.openings.left, s.openings.right],
+            )
+        })
+        .await;
+    }
+}
+
 impl<Build> Publisher<Build> {
     /// Emit one failure line for this slot, at most once per throttle window.
     fn log_throttled(&self, emit: impl FnOnce()) {
@@ -178,11 +245,10 @@ pub struct Publishers {
     /// Each arm's measured end-effector pose, relayed up its Cartesian leader
     /// slot in pose mode (an unpaired slot is a no-op).
     pub arm_pose_states: ArmPair<Publisher<PoseBuild>>,
-    /// The operator readout: an emitted topic rather than a pairing slot, and
-    /// the one message with no timestamp of its own.
-    status: TopicPublisher,
-    /// The readout's failure throttle, matching the per-slot ones.
-    status_error: Mutex<Option<Instant>>,
+    /// The governor proximity readout, on its contract-backed topic.
+    status: Publisher<StatusBuild>,
+    /// The whole-robot state snapshot, on its contract-backed topic.
+    limb_states: Publisher<LimbStateBuild>,
 }
 
 impl Publishers {
@@ -258,12 +324,18 @@ impl Publishers {
                 )
                 .await?,
             ),
-            status: declare(
+            status: Publisher::declare(
                 "collision_status",
                 collision_status::declare_publisher(runner),
+                collision_status::build_message as StatusBuild,
             )
             .await?,
-            status_error: Mutex::new(None),
+            limb_states: Publisher::declare(
+                "limb_states",
+                limb_states::declare_publisher(runner),
+                limb_states::build_message as LimbStateBuild,
+            )
+            .await?,
         })
     }
 
@@ -277,18 +349,14 @@ impl Publishers {
         throttling: bool,
         stopped: bool,
     ) {
-        let throttled = |emit: &dyn Fn()| {
-            let mut last = self.status_error.lock().expect("no panic while logging");
-            warn_throttled(&mut last, emit);
-        };
-        match collision_status::build_message(distance, link_a, link_b, throttling, stopped) {
-            Ok(msg) => {
-                if let Err(e) = self.status.publish(msg).await {
-                    throttled(&|| warn!("collision_status publish: {e}"));
-                }
-            }
-            Err(e) => throttled(&|| error!("collision_status build: {e}")),
-        }
+        self.status
+            .send(distance, link_a, link_b, throttling, stopped)
+            .await;
+    }
+
+    /// Publish one whole-robot state snapshot.
+    pub async fn send_limb_states(&self, snapshot: &LimbStateSnapshot) {
+        self.limb_states.send(snapshot).await;
     }
 }
 

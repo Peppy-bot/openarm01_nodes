@@ -16,9 +16,6 @@
     ],
     depends_on: {
       nodes: [
-        // The backbone: the collision_status feed behind the proximity
-        // readout. Bound to the backbone instance in the launcher.
-        { name: "openarm_backbone", tag: "v1", link_id: "backbone" },
         // The dataset recorder behind the panel's record button. zero_or_more:
         // a deployment without a recorder leaves the slot unbound and the
         // panel hides the recording controls.
@@ -29,6 +26,10 @@
         // is the "Send" button): one slot, bound by the launcher to the
         // backbone instance.
         { name: "limb_motion", tag: "v1", link_id: "limb_motion" },
+        // The proximity feed behind the readout, from whichever instance runs
+        // the collision governor: one slot, bound by the launcher to the
+        // backbone instance.
+        { name: "collision_status", tag: "v1", link_id: "collision_status" },
         // Per-motor health from every motor-bearing follower the launcher
         // wires, demuxed by the report's source. Zero producers is legal: a
         // stack without health producers just renders n/a.
@@ -112,7 +113,7 @@
         { link_id: "governor", name: "governor_control" },
       ],
       consumes: [
-        { link_id: "backbone", name: "collision_status" },
+        { link_id: "collision_status", name: "collision_status" },
         { link_id: "motor_health", name: "motor_health" },
         { link_id: "alerts", name: "alerts" },
         // The observed pairings' state back-channels.
