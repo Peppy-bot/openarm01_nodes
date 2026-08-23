@@ -155,41 +155,10 @@ class SimLauncher:
         )
 
     def _setup_environment(self) -> None:
-        import omni.usd
-
-        from isaacsim.storage.native import get_assets_root_path
-        from pxr import Sdf
-
-        stage = omni.usd.get_context().get_stage()
-
-        assets_root = get_assets_root_path()
-
-        if not assets_root:
-            raise RuntimeError(
-                "Could not resolve Isaac Sim assets root"
-            )
-
-        room_usd = (
-            assets_root
-            # Simple Room disabled
-        )
-
+        """Environment is loaded on demand by the scene commander."""
         logger.info(
-            "Referencing warehouse environment from: %s",
-            room_usd,
-        )
-
-        room_prim = stage.DefinePrim(
-            Sdf.Path("/World/DisabledEnvironment"),
-            "Xform",
-        )
-
-        room_prim.GetReferences().AddReference(
-            room_usd
-        )
-
-        logger.info(
-            "Warehouse environment added to stage"
+            "Startup environment disabled; "
+            "waiting for runtime scene selection"
         )
 
     def _warmup(self) -> None:

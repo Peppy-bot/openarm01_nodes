@@ -254,9 +254,9 @@ def main() -> None:
         "renderer": "PathTracing",
         "width": 1920,
         "height": 1080,
-        "samples_per_pixel_per_frame": 1,
+        "samples_per_pixel_per_frame": 2,
         "denoiser": True,
-        "max_bounces": 1,
+        "max_bounces": 2,
     }
 
     if handoff.headless:
