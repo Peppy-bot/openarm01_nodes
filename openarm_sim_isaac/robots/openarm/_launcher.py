@@ -82,6 +82,95 @@ class SimLauncher:
                         ),
                         "category": "Scenes",
                     },
+
+                    "scene/flat_grid": {
+                        "asset_id": "scene/flat_grid",
+                        "display_name": "Flat Grid",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Grid/"
+                            "default_environment.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/black_grid": {
+                        "asset_id": "scene/black_grid",
+                        "display_name": "Black Grid",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Grid/"
+                            "gridroom_black.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/curved_grid": {
+                        "asset_id": "scene/curved_grid",
+                        "display_name": "Curved Grid",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Grid/"
+                            "gridroom_curved.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/simple_room": {
+                        "asset_id": "scene/simple_room",
+                        "display_name": "Simple Room",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Simple_Room/"
+                            "simple_room.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/office": {
+                        "asset_id": "scene/office",
+                        "display_name": "Office",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Office/"
+                            "office.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/hospital": {
+                        "asset_id": "scene/hospital",
+                        "display_name": "Hospital",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Hospital/"
+                            "hospital.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/warehouse_forklifts": {
+                        "asset_id": "scene/warehouse_forklifts",
+                        "display_name": "Warehouse + Forklifts",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Simple_Warehouse/"
+                            "warehouse_with_forklifts.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
+                    "scene/warehouse_multiple_shelves": {
+                        "asset_id": "scene/warehouse_multiple_shelves",
+                        "display_name": "Warehouse Multiple Shelves",
+                        "kind": "scene",
+                        "path": (
+                            "Isaac/Environments/Simple_Warehouse/"
+                            "warehouse_multiple_shelves.usd"
+                        ),
+                        "category": "Scenes",
+                    },
+
                     "scene/full_warehouse": {
                         "asset_id": "scene/full_warehouse",
                         "display_name": "Full Warehouse",
@@ -89,15 +178,6 @@ class SimLauncher:
                         "path": (
                             "Isaac/Environments/Simple_Warehouse/"
                             "full_warehouse.usd"
-                        ),
-                        "category": "Scenes",
-                    },
-                    "scene/office": {
-                        "asset_id": "scene/office",
-                        "display_name": "Office",
-                        "kind": "scene",
-                        "path": (
-                            "Isaac/Environments/Office/office.usd"
                         ),
                         "category": "Scenes",
                     },

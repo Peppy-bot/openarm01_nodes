@@ -178,10 +178,29 @@ class SceneActionIO:
                 }
             )
 
+        scene_order = {
+            "scene/simple_warehouse": 0,
+            "scene/flat_grid": 1,
+            "scene/black_grid": 2,
+            "scene/curved_grid": 3,
+            "scene/simple_room": 4,
+            "scene/office": 5,
+            "scene/hospital": 6,
+            "scene/warehouse_forklifts": 7,
+            "scene/warehouse_multiple_shelves": 8,
+            "scene/full_warehouse": 9,
+        }
+
         public.sort(
             key=lambda item: (
                 item["kind"].lower(),
                 item["category"].lower(),
+                scene_order.get(
+                    item["asset_id"],
+                    999,
+                )
+                if item["kind"] == "scene"
+                else 0,
                 item["display_name"].lower(),
                 item["asset_id"],
             )
