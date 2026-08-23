@@ -252,8 +252,8 @@ def main() -> None:
     launch_config = {
         "headless": handoff.headless,
         "renderer": "PathTracing",
-        "width": 1280,
-        "height": 720,
+        "width": 1920,
+        "height": 1080,
         "samples_per_pixel_per_frame": 1,
         "denoiser": True,
         "max_bounces": 1,

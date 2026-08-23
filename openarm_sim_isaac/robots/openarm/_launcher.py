@@ -1731,8 +1731,18 @@ class SimLauncher:
 
         scene_path = "/World/RuntimeScene"
 
-        if stage.GetPrimAtPath(scene_path).IsValid():
-            stage.RemovePrim(scene_path)
+        existing_prim = stage.GetPrimAtPath(scene_path)
+
+        # Do not destroy/recreate RuntimeScene if it already exists.
+        # Replacing it while PhysX tensor views are active can invalidate
+        # the OpenArm articulation physics view.
+        if existing_prim.IsValid():
+            logger.info(
+                "Runtime scene already exists at %s; "
+                "skipping duplicate scene load request",
+                scene_path,
+            )
+            return
 
         prim = stage.DefinePrim(
             Sdf.Path(scene_path),
@@ -1766,7 +1776,7 @@ class SimLauncher:
         )
 
         logger.info(
-            "Loaded Isaac scene %s at scale %s",
+            "Isaac scene reference added %s at scale %s",
             usd_path,
             scale,
         )
