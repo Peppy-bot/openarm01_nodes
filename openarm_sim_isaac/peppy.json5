@@ -220,6 +220,35 @@
         },
 
         {
+          // Apply a world-frame force to a spawned dynamic object.
+          //
+          // force = [Fx, Fy, Fz] in Newtons.
+          // duration_s controls how long PhysX keeps the force enabled.
+          name: "apply_force",
+
+          goal_service: {
+            request_message_format: {
+              object_id: "string",
+
+              force: {
+                $type: "array",
+                $items: "f64",
+                $length: 3,
+              },
+
+              duration_s: "f64",
+            },
+          },
+
+          result_service: {
+            response_message_format: {
+              success: "bool",
+              message: "string",
+            },
+          },
+        },
+
+        {
           // Move the OpenArm robot root in the Isaac world frame.
           //
           // position = [x, y, z] in metres.

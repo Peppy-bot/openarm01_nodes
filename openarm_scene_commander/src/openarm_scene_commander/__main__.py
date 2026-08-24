@@ -14,6 +14,7 @@ from aiohttp import web
 from peppygen import NodeBuilder, NodeRunner
 
 from peppygen.consumed_actions.simulation import (
+    apply_force,
     clear_scene,
     load_scene,
     move_object,
@@ -284,6 +285,65 @@ async def _action_spawn_object(
         "success": True,
         "message": data.message,
         "object_id": data.object_id,
+    }
+
+
+async def _action_apply_force(
+    node_runner: NodeRunner,
+    payload: dict,
+) -> dict:
+    producer = apply_force.bound_producer(
+        node_runner
+    )
+
+    force = [
+        float(value)
+        for value in payload["force"]
+    ]
+
+    if len(force) != 3:
+        raise ValueError(
+            "force must contain exactly 3 values"
+        )
+
+    request = apply_force.GoalRequest(
+        object_id=str(
+            payload["object_id"]
+        ),
+        force=force,
+        duration_s=float(
+            payload.get(
+                "duration_s",
+                0.5,
+            )
+        ),
+    )
+
+    handle = await apply_force.ActionHandle.fire_goal(
+        node_runner,
+        producer,
+        request,
+        timeout=ACTION_TIMEOUT_S,
+        feedback_qos=peppylib.QoSProfile.Standard,
+    )
+
+    if not handle.accepted:
+        raise RuntimeError(
+            f"apply_force rejected: {handle.reason}"
+        )
+
+    result = await handle.get_result(
+        timeout=ACTION_TIMEOUT_S
+    )
+
+    data = _require_completed(
+        apply_force,
+        result,
+    )
+
+    return {
+        "success": True,
+        "message": data.message,
     }
 
 
@@ -603,6 +663,53 @@ async def _api_spawn_object(
         )
 
         result = await _action_spawn_object(
+            request.app["node_runner"],
+            payload,
+        )
+
+        return web.json_response(
+            result
+        )
+
+    except Exception as exc:
+        return _json_error(exc)
+
+
+async def _api_apply_force(
+    request: web.Request,
+) -> web.Response:
+    try:
+        payload = await _request_json(
+            request
+        )
+
+        force = payload.get(
+            "force",
+            [],
+        )
+
+        if (
+            not isinstance(force, list)
+            or len(force) != 3
+        ):
+            raise ValueError(
+                "force must contain exactly "
+                "3 values [Fx, Fy, Fz]"
+            )
+
+        payload["force"] = [
+            float(value)
+            for value in force
+        ]
+
+        payload["duration_s"] = float(
+            payload.get(
+                "duration_s",
+                0.5,
+            )
+        )
+
+        result = await _action_apply_force(
             request.app["node_runner"],
             payload,
         )
@@ -1112,10 +1219,23 @@ function renderObjects() {
     container.innerHTML = objectList.map((obj, index) => {
         const p = obj.position || [0,0,0];
 
+        const dynamic =
+            String(obj.physics || "").toLowerCase()
+            === "dynamic";
+
         return `
         <div class="object">
             <code>${obj.object_id}</code>
-            <div class="small">${obj.asset_id}</div>
+
+            <div class="small">
+                ${obj.asset_id}
+                &nbsp;|&nbsp;
+                physics=${obj.physics || "none"}
+                &nbsp;|&nbsp;
+                mass=${obj.mass ?? "-"} kg
+            </div>
+
+            <label>Position</label>
 
             <div class="row">
                 <input id="ox${index}" type="number"
@@ -1127,13 +1247,170 @@ function renderObjects() {
             </div>
 
             <div class="two">
-                <button onclick="moveObject(${index})">Move</button>
+                <button onclick="moveObject(${index})">
+                    Move
+                </button>
+
                 <button class="danger"
-                    onclick="removeObject(${index})">Remove</button>
+                    onclick="removeObject(${index})">
+                    Remove
+                </button>
             </div>
+
+            ${
+                dynamic
+                ? `
+                    <label>Force magnitude (N)</label>
+                    <input
+                        id="forceMag${index}"
+                        type="number"
+                        step="1"
+                        min="0"
+                        value="20">
+
+                    <label>Duration (s)</label>
+                    <input
+                        id="forceDuration${index}"
+                        type="number"
+                        step="0.1"
+                        min="0.01"
+                        max="30"
+                        value="0.5">
+
+                    <div class="row">
+                        <button onclick=
+                            "applyForce(${index},1,0,0)">
+                            +X
+                        </button>
+
+                        <button onclick=
+                            "applyForce(${index},-1,0,0)">
+                            -X
+                        </button>
+                    </div>
+
+                    <div class="row">
+                        <button onclick=
+                            "applyForce(${index},0,1,0)">
+                            +Y
+                        </button>
+
+                        <button onclick=
+                            "applyForce(${index},0,-1,0)">
+                            -Y
+                        </button>
+                    </div>
+
+                    <div class="row">
+                        <button onclick=
+                            "applyForce(${index},0,0,1)">
+                            +Z
+                        </button>
+
+                        <button onclick=
+                            "applyForce(${index},0,0,-1)">
+                            -Z
+                        </button>
+                    </div>
+                  `
+                : `
+                    <div class="small">
+                        Force controls require
+                        Physics = dynamic.
+                    </div>
+                  `
+            }
         </div>`;
     }).join("");
 }
+
+async function applyForce(
+    index,
+    dx,
+    dy,
+    dz
+) {
+    try {
+        const obj = objectList[index];
+
+        if (!obj) {
+            throw new Error(
+                "Selected object no longer exists"
+            );
+        }
+
+        if (
+            String(obj.physics || "").toLowerCase()
+            !== "dynamic"
+        ) {
+            throw new Error(
+                "Force requires a dynamic object"
+            );
+        }
+
+        const magnitude =
+            Number(
+                el(`forceMag${index}`).value
+            );
+
+        const duration =
+            Number(
+                el(`forceDuration${index}`).value
+            );
+
+        if (
+            !Number.isFinite(magnitude)
+            || magnitude < 0
+        ) {
+            throw new Error(
+                "Force magnitude must be >= 0 N"
+            );
+        }
+
+        if (
+            !Number.isFinite(duration)
+            || duration <= 0
+            || duration > 30
+        ) {
+            throw new Error(
+                "Duration must be > 0 and <= 30 s"
+            );
+        }
+
+        const force = [
+            magnitude * dx,
+            magnitude * dy,
+            magnitude * dz
+        ];
+
+        status(
+            `Applying ${JSON.stringify(force)} N `
+            + `to ${obj.object_id}...`
+        );
+
+        const data = await api(
+            "/api/objects/force",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    object_id: obj.object_id,
+                    force: force,
+                    duration_s: duration
+                })
+            }
+        );
+
+        status(data.message);
+    }
+
+    catch (err) {
+        status(
+            err.message,
+            true
+        );
+    }
+}
+
 
 async function moveObject(index) {
     try {
@@ -1272,6 +1549,11 @@ async def _run_http_server(
     app.router.add_post(
         "/api/objects/spawn",
         _api_spawn_object,
+    )
+
+    app.router.add_post(
+        "/api/objects/force",
+        _api_apply_force,
     )
 
     app.router.add_post(

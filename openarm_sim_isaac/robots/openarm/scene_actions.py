@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 
 from peppygen.exposed_actions import (
+    apply_force,
     clear_scene,
     load_scene,
     move_object,
@@ -61,6 +62,9 @@ class SceneActionIO:
         """Expose Peppy services/actions and start their request loops."""
 
         self._action_handles = {
+            "apply_force": await apply_force.ActionHandle.expose(
+                self._node_runner
+            ),
             "load_scene": await load_scene.ActionHandle.expose(
                 self._node_runner
             ),
@@ -82,6 +86,9 @@ class SceneActionIO:
         }
 
         self._tasks = [
+            asyncio.create_task(
+                self._serve_apply_force()
+            ),
             asyncio.create_task(self._serve_assets()),
             asyncio.create_task(self._serve_objects()),
             asyncio.create_task(self._serve_load_scene()),
@@ -525,6 +532,75 @@ class SceneActionIO:
                 "message": f"Removed {object_id}",
             }
 
+        if operation == "apply_force":
+            object_id = str(
+                payload["object_id"]
+            )
+
+            obj = self._object(
+                object_id
+            )
+
+            if obj is None:
+                raise ValueError(
+                    f"Unknown object_id: {object_id}"
+                )
+
+            if (
+                str(
+                    obj.get(
+                        "physics",
+                        "none",
+                    )
+                ).lower()
+                != "dynamic"
+            ):
+                raise ValueError(
+                    "Force can only be applied to "
+                    f"dynamic objects: {object_id}"
+                )
+
+            force = [
+                float(value)
+                for value in payload["force"]
+            ]
+
+            if len(force) != 3:
+                raise ValueError(
+                    "force must contain exactly "
+                    "3 values [Fx, Fy, Fz]"
+                )
+
+            duration_s = float(
+                payload["duration_s"]
+            )
+
+            if (
+                duration_s <= 0.0
+                or duration_s > 30.0
+            ):
+                raise ValueError(
+                    "duration_s must be > 0 "
+                    "and <= 30 seconds"
+                )
+
+            launcher._runtime_apply_force(
+                {
+                    "name": object_id,
+                    "force": force,
+                    "duration_s": duration_s,
+                }
+            )
+
+            return {
+                "success": True,
+                "message": (
+                    f"Applied force {force} N "
+                    f"to {object_id} for "
+                    f"{duration_s:.3f} s"
+                ),
+            }
+
         if operation == "move_robot":
             position = [
                 float(value)
@@ -767,6 +843,43 @@ class SceneActionIO:
                 "remove_object",
                 {
                     "object_id": request.object_id,
+                },
+            )
+
+            await self._finish_simple(
+                context,
+                result,
+            )
+
+    async def _serve_apply_force(self) -> None:
+        handle = self._action_handles[
+            "apply_force"
+        ]
+
+        while True:
+            context = (
+                await handle.handle_goal_next_request(
+                    lambda _request:
+                    apply_force.GoalDecision.accept()
+                )
+            )
+
+            if context is None:
+                return
+
+            request = context.request().data
+
+            result = await self._submit(
+                "apply_force",
+                {
+                    "object_id": request.object_id,
+                    "force": [
+                        float(value)
+                        for value in request.force
+                    ],
+                    "duration_s": float(
+                        request.duration_s
+                    ),
                 },
             )
 

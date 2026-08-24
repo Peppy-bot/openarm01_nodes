@@ -2004,6 +2004,219 @@ class SimLauncher:
             position,
         )
 
+    def _runtime_apply_force(
+        self,
+        command: dict,
+    ) -> None:
+        """Apply a timed world-frame force to a dynamic runtime object."""
+
+        import time
+
+        import omni.usd
+
+        from pxr import (
+            Gf,
+            PhysxSchema,
+            UsdPhysics,
+        )
+
+        name = str(
+            command["name"]
+        )
+
+        force = [
+            float(value)
+            for value in command["force"]
+        ]
+
+        duration_s = float(
+            command["duration_s"]
+        )
+
+        if len(force) != 3:
+            raise ValueError(
+                "force must have exactly 3 values"
+            )
+
+        stage = (
+            omni.usd
+            .get_context()
+            .get_stage()
+        )
+
+        prim_path = (
+            f"/World/RuntimeObjects/{name}"
+        )
+
+        prim = stage.GetPrimAtPath(
+            prim_path
+        )
+
+        if not prim.IsValid():
+            raise RuntimeError(
+                "Runtime object does not exist: "
+                f"{name}"
+            )
+
+        if not prim.HasAPI(
+            UsdPhysics.RigidBodyAPI
+        ):
+            raise RuntimeError(
+                "Runtime object is not a rigid body: "
+                f"{name}. Spawn it with "
+                "Physics=dynamic."
+            )
+
+        force_api = (
+            PhysxSchema.PhysxForceAPI.Get(
+                stage,
+                prim.GetPath(),
+            )
+        )
+
+        if not force_api:
+            force_api = (
+                PhysxSchema.PhysxForceAPI.Apply(
+                    prim
+                )
+            )
+
+        if not force_api:
+            raise RuntimeError(
+                "Could not apply PhysxForceAPI "
+                f"to {prim_path}"
+            )
+
+        # Real force in Newtons rather than acceleration.
+        force_api.CreateModeAttr().Set(
+            "force"
+        )
+
+        # Interpret X/Y/Z in world coordinates.
+        force_api.CreateWorldFrameEnabledAttr().Set(
+            True
+        )
+
+        force_api.CreateForceAttr().Set(
+            Gf.Vec3f(
+                float(force[0]),
+                float(force[1]),
+                float(force[2]),
+            )
+        )
+
+        force_api.CreateTorqueAttr().Set(
+            Gf.Vec3f(
+                0.0,
+                0.0,
+                0.0,
+            )
+        )
+
+        force_api.CreateForceEnabledAttr().Set(
+            True
+        )
+
+        if not hasattr(
+            self,
+            "_runtime_force_deadlines",
+        ):
+            self._runtime_force_deadlines = {}
+
+        self._runtime_force_deadlines[
+            prim_path
+        ] = (
+            time.monotonic()
+            + duration_s
+        )
+
+        logger.info(
+            "Applied runtime force %s N to %s "
+            "for %.3f s",
+            force,
+            prim_path,
+            duration_s,
+        )
+
+    def _update_runtime_forces(
+        self,
+    ) -> None:
+        """Disable runtime forces whose requested duration has elapsed."""
+
+        import time
+
+        deadlines = getattr(
+            self,
+            "_runtime_force_deadlines",
+            None,
+        )
+
+        if not deadlines:
+            return
+
+        now = time.monotonic()
+
+        expired = [
+            prim_path
+            for prim_path, deadline
+            in list(deadlines.items())
+            if now >= deadline
+        ]
+
+        if not expired:
+            return
+
+        import omni.usd
+
+        from pxr import (
+            Gf,
+            PhysxSchema,
+        )
+
+        stage = (
+            omni.usd
+            .get_context()
+            .get_stage()
+        )
+
+        for prim_path in expired:
+            prim = stage.GetPrimAtPath(
+                prim_path
+            )
+
+            if prim.IsValid():
+                force_api = (
+                    PhysxSchema
+                    .PhysxForceAPI
+                    .Get(
+                        stage,
+                        prim.GetPath(),
+                    )
+                )
+
+                if force_api:
+                    force_api.CreateForceAttr().Set(
+                        Gf.Vec3f(
+                            0.0,
+                            0.0,
+                            0.0,
+                        )
+                    )
+
+                    force_api.CreateForceEnabledAttr().Set(
+                        False
+                    )
+
+            deadlines.pop(
+                prim_path,
+                None,
+            )
+
+            logger.info(
+                "Stopped runtime force on %s",
+                prim_path,
+            )
+
     def _runtime_move_object(
         self,
         command: dict,
@@ -2147,6 +2360,8 @@ class SimLauncher:
                 self._scene_actions.process_pending(
                     self
                 )
+
+                self._update_runtime_forces()
 
                 self._apply_runtime_arm_targets()
 

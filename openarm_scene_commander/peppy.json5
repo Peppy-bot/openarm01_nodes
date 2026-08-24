@@ -63,6 +63,11 @@
         },
         {
           link_id: "simulation",
+          name: "apply_force",
+        },
+
+        {
+          link_id: "simulation",
           name: "move_robot",
         },
       ],
