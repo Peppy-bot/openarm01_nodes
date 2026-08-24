@@ -28,6 +28,7 @@ class SimLauncher:
         io,
         scene_actions,
         state_rate_hz: int,
+        cameras_enabled: bool,
     ) -> None:
         self._sim_app = sim_app
         self._usd_path = usd_path
@@ -36,7 +37,7 @@ class SimLauncher:
         self._io = io
         self._scene_actions = scene_actions
         self._state_rate_hz = state_rate_hz
-
+        self._cameras_enabled = cameras_enabled
         self._timeline = None
         self._extension: Optional[IsaacBridgeExtension] = None
 
@@ -56,6 +57,10 @@ class SimLauncher:
         )
 
     def run(self) -> None:
+        # Everything from the stage load onward shares one cleanup path. Camera
+        # setup, the warmup and the extension constructor all run before the
+        # loop, and a failure in any of them still has to stop the timeline and
+        # close Isaac; a bare raise here would strand a live SimulationApp.
         try:
             self._load_stage()
 
@@ -188,12 +193,16 @@ class SimLauncher:
                 self._isaac_assets
             )
 
+            if self._cameras_enabled:
+                self._configure_camera_rendering()
+
             self._warmup()
             self._start_timeline()
 
             self._extension = IsaacBridgeExtension(
                 self._io,
                 self._state_rate_hz,
+                self._cameras_enabled,
             )
 
             self._runtime_commander.start()
@@ -210,11 +219,13 @@ class SimLauncher:
 
         except FileNotFoundError as exc:
             logger.error(str(exc))
-            self._sim_app.close()
-
+        except KeyboardInterrupt:
+            logger.info("Shutting down.")
         except Exception:
             logger.exception("SimLauncher.run failed")
             raise
+        finally:
+            self._shutdown()
 
     def _load_stage(self) -> None:
         import omni.usd
@@ -240,6 +251,14 @@ class SimLauncher:
             "Startup environment disabled; "
             "waiting for runtime scene selection"
         )
+
+    def _configure_camera_rendering(self) -> None:
+        import carb.settings
+
+        # Camera annotators are read right after each update; async rendering
+        # would desynchronize their data from the physics state just stepped.
+        carb.settings.get_settings().set("/app/asyncRendering", False)
+        logger.info("Async rendering disabled for camera capture")
 
     def _warmup(self) -> None:
         for _ in range(_WARMUP_STEPS):
@@ -2328,11 +2347,11 @@ class SimLauncher:
     # ------------------------------------------------------------------
 
     def _run_loop(self) -> None:
-        try:
-            while (
-                self._sim_app.is_running()
-                and not self._stop.is_set()
-            ):
+        while self._sim_app.is_running() and not self._stop.is_set():
+                # Isaac advances physics inside update(); we then drive the
+                # bridge step on the same thread (Articulation reads require
+                # Isaac's main thread). The extension defers its own setup until
+                # the stage is live, so early steps are cheap no-ops.
                 self._sim_app.update()
 
                 if self._extension is not None:
@@ -2365,35 +2384,31 @@ class SimLauncher:
 
                 self._apply_runtime_arm_targets()
 
-        except KeyboardInterrupt:
-            logger.info(
-                "Shutting down."
+    def _shutdown(self) -> None:
+        self._ready.clear()
+
+        try:
+            self._runtime_commander.stop()
+        except Exception:
+            logger.exception(
+                "Runtime commander shutdown failed"
             )
 
-        finally:
-            self._ready.clear()
-
+        if self._extension is not None:
+            # An extension shutdown failure must not strand the Isaac process:
+            # timeline.stop + sim_app.close still need to run.
             try:
-                self._runtime_commander.stop()
+                self._extension.shutdown()
             except Exception:
                 logger.exception(
-                    "Runtime commander shutdown failed"
+                    "IsaacBridgeExtension shutdown failed"
                 )
 
-            if self._extension is not None:
-                try:
-                    self._extension.shutdown()
+        if self._timeline is not None:
+            self._timeline.stop()
 
-                except Exception:
-                    logger.exception(
-                        "IsaacBridgeExtension shutdown failed"
-                    )
+        self._sim_app.close()
 
-            if self._timeline is not None:
-                self._timeline.stop()
-
-            self._sim_app.close()
-
-            logger.info(
-                "Isaac Sim closed."
-            )
+        logger.info(
+            "Isaac Sim closed."
+        )

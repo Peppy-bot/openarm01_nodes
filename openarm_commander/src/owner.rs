@@ -29,13 +29,14 @@ use crate::pose::{
     joint_jog_tick,
 };
 use crate::state::{
-    ARM_DOF, ArmTarget, BySide, GesturePhase, GesturePlayback, Proximity, SIDES, Side, UiState,
+    ARM_DOF, Alert, ArmHealth, ArmTarget, BySide, GesturePhase, GesturePlayback, GripperHealth,
+    Proximity, RecordingEpisode, SIDES, Side, UiState,
 };
 use crate::ui::{
     Command, build_snapshot_json, clamp_to_limits, ee_speed_floored, gripper_limits, sane_duration,
     valid_governor_band,
 };
-use crate::{move_arm, move_arm_joints, move_gripper};
+use crate::{move_arm, move_arm_joints, move_gripper, record};
 
 /// The browser snapshot cadence (10 Hz); the command tick runs far faster, so the
 /// FK-heavy snapshot is built here rather than every tick.
@@ -67,12 +68,37 @@ pub enum Feedback {
         max_effort: f64,
     },
     Proximity(Proximity),
+    // Boxed: seven readings dwarf every other variant, and this channel also
+    // carries the high-rate measured-state stream.
+    MotorHealth {
+        side: Side,
+        health: Box<ArmHealth>,
+    },
+    GripperMotorHealth {
+        side: Side,
+        health: GripperHealth,
+    },
+    Alert(Alert),
     ArmGoalDone {
         side: Side,
         summary: String,
     },
     GripperGoalDone {
         side: Side,
+        summary: String,
+    },
+    // Live frame count from the in-flight record_episode goal's feedback.
+    RecordProgress {
+        frames: u64,
+    },
+    // The record goal reached a terminal state; the summary names the saved
+    // (or discarded) episode.
+    RecordDone {
+        summary: String,
+    },
+    // finish_session answered; the summary names the finished session or the
+    // refusal reason.
+    SessionFinished {
         summary: String,
     },
 }
@@ -103,6 +129,7 @@ pub struct GovernorFrame {
     pub d_stop: f64,
     pub d_safe: f64,
     pub max_ee_velocity_m_s: f64,
+    pub max_gripper_rate_frac_s: f64,
 }
 
 impl CommandFrame {
@@ -122,6 +149,7 @@ impl CommandFrame {
                 d_stop: s.d_stop,
                 d_safe: s.d_safe,
                 max_ee_velocity_m_s: s.max_ee_velocity_m_s,
+                max_gripper_rate_frac_s: s.max_gripper_rate_frac_s,
             },
         }
     }
@@ -191,7 +219,7 @@ pub async fn run(
     models: ArmModels,
     registry: Registry,
     runner: Arc<NodeRunner>,
-    command_rate_hz: u32,
+    command_period: Duration,
     token: CancellationToken,
     channels: Channels,
 ) {
@@ -211,6 +239,9 @@ pub async fn run(
         feedback_tx,
         pending: BySide::new(None, None),
     };
+    owner.state.recorder.available = record::available(&owner.runner);
+    owner.state.health_bound = crate::motor_health::available(&owner.runner);
+    owner.state.alerts_bound = crate::alerts::available(&owner.runner);
 
     // Publish the starting frame and snapshot before the first tick, so the publishers
     // and any already-connected browser see real state at once rather than after a tick.
@@ -221,8 +252,10 @@ pub async fn run(
         let _ = snapshot_tx.send(json);
     }
 
-    let tick_dt_s = 1.0 / command_rate_hz as f64;
-    let mut command_tick = interval(Duration::from_micros(1_000_000 / command_rate_hz as u64));
+    // The jog integrator steps by exactly the tick it is driven at, so both come
+    // from the one period parsed at startup rather than from the rate twice.
+    let tick_dt_s = command_period.as_secs_f64();
+    let mut command_tick = interval(command_period);
     command_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut snapshot_tick = interval(SNAPSHOT_INTERVAL);
     snapshot_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -557,24 +590,92 @@ impl Owner {
                 self.state
                     .set_status(format!("collision avoidance {}", on_off(enabled)));
             }
+            Command::StartRecording { task } => {
+                if !self.state.recorder.available {
+                    self.state.set_status("no recorder in this deployment");
+                    return;
+                }
+                if self.state.recorder.episode.is_some() {
+                    self.state.set_status("already recording");
+                    return;
+                }
+                if self.state.recorder.finishing {
+                    self.state
+                        .set_status("finishing the session; wait for it to complete");
+                    return;
+                }
+                let task = task.trim().to_string();
+                if task.is_empty() {
+                    self.state.set_status("name the task before recording");
+                    return;
+                }
+                let stop = GoalToken::new();
+                self.state.recorder.episode = Some(RecordingEpisode {
+                    frames: 0,
+                    stop: stop.clone(),
+                });
+                self.state.set_status(format!("recording '{task}'"));
+                record::spawn(
+                    self.runner.clone(),
+                    self.feedback_tx.clone(),
+                    self.token.clone(),
+                    stop,
+                    task,
+                );
+            }
+            Command::FinishSession => {
+                if !self.state.recorder.available {
+                    self.state.set_status("no recorder in this deployment");
+                    return;
+                }
+                if self.state.recorder.episode.is_some() {
+                    self.state
+                        .set_status("stop recording before finishing the session");
+                    return;
+                }
+                if self.state.recorder.finishing {
+                    self.state.set_status("already finishing");
+                    return;
+                }
+                self.state.recorder.finishing = true;
+                self.state
+                    .set_status("finishing session (finalize + mirror)");
+                record::spawn_finish(self.runner.clone(), self.feedback_tx.clone());
+            }
+            Command::StopRecording => match &self.state.recorder.episode {
+                Some(episode) if episode.stop.is_cancelled() => {
+                    self.state.set_status("still saving the episode");
+                }
+                Some(episode) => {
+                    episode.stop.cancel();
+                    self.state.set_status("stopping episode, saving");
+                }
+                None => self.state.set_status("not recording"),
+            },
             Command::SetGovernorParams {
                 d_stop,
                 d_safe,
                 max_ee_velocity_m_s,
+                max_gripper_rate_frac_s,
             } => {
                 // The backbone validates again before applying; reject a degenerate band here
                 // so the UI cannot stream one.
-                if !valid_governor_band(d_stop, d_safe, max_ee_velocity_m_s) {
+                if !(valid_governor_band(d_stop, d_safe, max_ee_velocity_m_s)
+                    && max_gripper_rate_frac_s.is_finite()
+                    && max_gripper_rate_frac_s > 0.0)
+                {
                     self.state.set_status(
-                        "governor params ignored: require 0 < d_stop < d_safe and speed > 0",
+                        "governor params ignored: require 0 < d_stop < d_safe and positive rates",
                     );
                     return;
                 }
                 self.state.d_stop = d_stop;
                 self.state.d_safe = d_safe;
                 self.state.max_ee_velocity_m_s = max_ee_velocity_m_s;
+                self.state.max_gripper_rate_frac_s = max_gripper_rate_frac_s;
                 self.state.set_status(format!(
-                    "governor: d_stop={d_stop} d_safe={d_safe} max_ee={max_ee_velocity_m_s} m/s"
+                    "governor: d_stop={d_stop} d_safe={d_safe} max_ee={max_ee_velocity_m_s} m/s \
+                     gripper opening={max_gripper_rate_frac_s} /s"
                 ));
             }
         }
@@ -603,6 +704,15 @@ impl Owner {
             Feedback::Proximity(proximity) => {
                 self.state.proximity = Some(proximity);
             }
+            Feedback::GripperMotorHealth { side, health } => {
+                self.state.gripper_health[side] = Some(health);
+            }
+            Feedback::MotorHealth { side, health } => {
+                self.state.health[side] = Some(*health);
+            }
+            Feedback::Alert(alert) => {
+                self.state.apply_alert(alert);
+            }
             Feedback::ArmGoalDone { side, summary } => {
                 self.state.arms[side].in_flight = false;
                 self.state.arms[side].preempt = None;
@@ -615,6 +725,19 @@ impl Owner {
             }
             Feedback::GripperGoalDone { side, summary } => {
                 self.state.grippers[side].in_flight = false;
+                self.state.set_status(summary);
+            }
+            Feedback::RecordProgress { frames } => {
+                if let Some(episode) = &mut self.state.recorder.episode {
+                    episode.frames = frames;
+                }
+            }
+            Feedback::RecordDone { summary } => {
+                self.state.recorder.episode = None;
+                self.state.set_status(summary);
+            }
+            Feedback::SessionFinished { summary } => {
+                self.state.recorder.finishing = false;
                 self.state.set_status(summary);
             }
         }
@@ -1106,7 +1229,7 @@ mod tests {
 
     // A state with measurements on both sides, as RunGesture requires.
     fn measured_state() -> UiState {
-        let mut s = UiState::new(true, 0.005, 0.02, 0.25, 10.0);
+        let mut s = UiState::new(true, 0.005, 0.02, 0.25, 6.0, 10.0);
         for side in SIDES {
             s.arms[side].last_feedback = Some([0.1, 0.2, -0.1, 0.8, 0.0, 0.1, 0.0]);
             s.grippers[side].last_feedback = Some(0.3);
@@ -1213,7 +1336,7 @@ mod tests {
     #[test]
     fn disconnect_disarms_sides_and_restores_governor_default_on() {
         // Launched with avoidance on; operator turned it off with both sides armed.
-        let mut s = UiState::new(true, 0.005, 0.02, 0.25, 10.0);
+        let mut s = UiState::new(true, 0.005, 0.02, 0.25, 6.0, 10.0);
         s.collision_enabled = false;
         s.enabled[Side::Left] = true;
         s.enabled[Side::Right] = true;
@@ -1231,7 +1354,7 @@ mod tests {
     #[test]
     fn disconnect_restores_governor_default_off_when_launched_ungoverned() {
         // Launched deliberately ungoverned; operator turned avoidance on.
-        let mut s = UiState::new(false, 0.005, 0.02, 0.25, 10.0);
+        let mut s = UiState::new(false, 0.005, 0.02, 0.25, 6.0, 10.0);
         s.collision_enabled = true;
         reset_on_disconnect(&mut s);
         assert!(

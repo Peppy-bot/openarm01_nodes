@@ -14,8 +14,14 @@ from pathlib import Path
 
 import pyjson5
 
+from camera_common import CameraConfig
 from sim_topics import SimTopicIO
-from exts import MujocoActuatorCtrl, MujocoArticulation, MujocoGripperSensor
+from exts import (
+    MujocoActuatorCtrl,
+    MujocoArticulation,
+    MujocoCameraSensor,
+    MujocoGripperSensor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,14 @@ def _finger_travel_from_range(joint_name: str, lo: float, hi: float) -> float:
 class MujocoBridgeExtension:
     """Drives the engine from the typed command streams and publishes state."""
 
-    def __init__(self, model, data, io: SimTopicIO, state_rate_hz: int) -> None:
+    def __init__(
+        self,
+        model,
+        data,
+        io: SimTopicIO,
+        state_rate_hz: int,
+        cameras: list[CameraConfig],
+    ) -> None:
         self._model = model
         self._data = data
         self._io = io
@@ -58,6 +71,8 @@ class MujocoBridgeExtension:
         # Signed full-open travel per finger joint, read from the model at
         # setup; commanded opening fractions scale onto it.
         self._gripper_travels: dict[int, list[float]] = {}
+        # Last force limit written per gripper, so the cap is not re-sent per tick.
+        self._applied_effort: dict[int, float] = {}
 
         cfg = pyjson5.loads(_CONFIG_PATH.read_text())
         self._arms: list[dict] = cfg["arms"]
@@ -70,6 +85,11 @@ class MujocoBridgeExtension:
         # finger joints on their MJCF defaults.
         self._actuator = MujocoActuatorCtrl(model, data, params=self._actuator_params())
         self._gripper_sensors: dict[int, MujocoGripperSensor] = {}
+        # The cameras were attached to this model at compile time, so an empty
+        # list here means the scene carries none to render.
+        self._camera_sensor = (
+            MujocoCameraSensor(model, cameras, io) if cameras else None
+        )
         self._joint_index: dict[str, int] = {}
 
     def _actuator_params(self) -> dict:
@@ -102,6 +122,9 @@ class MujocoBridgeExtension:
             )
         if not self._actuator.setup():
             raise RuntimeError("MujocoActuatorCtrl setup failed")
+        self._actuator.require_force_limited(
+            [f for g in self._grippers for f in g["fingers"]]
+        )
         for gripper in self._grippers:
             sensor = MujocoGripperSensor(
                 self._model, self._data, finger_joints=gripper["fingers"]
@@ -114,6 +137,8 @@ class MujocoBridgeExtension:
             self._gripper_travels[gripper["gripper_id"]] = [
                 self._finger_travel(name) for name in gripper["fingers"]
             ]
+        if self._camera_sensor is not None:
+            self._camera_sensor.start()
         logger.info(
             f"MujocoBridgeExtension ready with {len(self._arms)} arm(s), "
             f"{len(self._grippers)} gripper(s)"
@@ -131,6 +156,9 @@ class MujocoBridgeExtension:
 
         self._apply_commands()
         mujoco.mj_step(self._model, self._data)
+        if self._camera_sensor is not None:
+            self._camera_sensor.snapshot(self._data.qpos)
+            self._camera_sensor.raise_if_failed()
 
         now = time.monotonic()
         if now - self._last_publish_s < self._telemetry_period_s:
@@ -153,9 +181,16 @@ class MujocoBridgeExtension:
             self._actuator.write_targets(dict(zip(joints, positions)), velocity_values)
 
         for gripper in self._grippers:
-            opening = self._io.latest_gripper_command(gripper["gripper_id"])
-            if opening is None:
+            command = self._io.latest_gripper_command(gripper["gripper_id"])
+            if command is None:
                 continue
+            opening, max_effort = command
+            # Re-applied only on change: the cap is a model write, not a
+            # per-tick target.
+            if self._applied_effort.get(gripper["gripper_id"]) != max_effort:
+                # Recorded only once written, so a not-ready tick retries.
+                if self._actuator.set_force_limit(gripper["fingers"], max_effort):
+                    self._applied_effort[gripper["gripper_id"]] = max_effort
             # Map the opening fraction onto each finger's own signed travel, so
             # the same command drives prismatic (v1) and revolute (v2) fingers.
             travels = self._gripper_travels[gripper["gripper_id"]]
@@ -193,6 +228,8 @@ class MujocoBridgeExtension:
 
     def shutdown(self) -> None:
         logger.info("MujocoBridgeExtension shutting down.")
+        if self._camera_sensor is not None:
+            self._camera_sensor.stop()
         self._articulation.teardown()
         self._actuator.teardown()
         for sensor in self._gripper_sensors.values():

@@ -16,12 +16,15 @@ from pathlib import Path
 
 import pyjson5
 
-from sim_topics import SimTopicIO
-from exts import IsaacActuatorCtrl, IsaacArticulation, IsaacGripperSensor
+from camera_common import load_camera_configs, validate_camera_slots
+from sim_topics import COLOR_CAMERA_SLOT_NAMES, RGBD_CAMERA_SLOT_NAMES, SimTopicIO
+from exts import IsaacActuatorCtrl, IsaacArticulation, IsaacCameraSensor, IsaacGripperSensor
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "sim_bridge.json5"
+_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_CONFIG_PATH = _CONFIG_DIR / "sim_bridge.json5"
+_CAMERAS_CONFIG_PATH = _CONFIG_DIR / "cameras.json5"
 
 
 def _finger_travel_from_range(joint_name: str, lo: float, hi: float) -> float:
@@ -57,7 +60,7 @@ class IsaacBridgeExtension:
     is ready, step() is a no-op except for the setup retry.
     """
 
-    def __init__(self, io: SimTopicIO, state_rate_hz: int) -> None:
+    def __init__(self, io: SimTopicIO, state_rate_hz: int, cameras_enabled: bool) -> None:
         self._io = io
         # Telemetry is throttled to state_rate_hz: serializing every reader at
         # the physics tick saturates the single sim thread. Writers and the
@@ -67,6 +70,8 @@ class IsaacBridgeExtension:
         # Signed full-open travel per finger joint, read from the articulation's
         # DOF limits at setup; commanded opening fractions scale onto it.
         self._gripper_travels: dict[int, list[float]] = {}
+        # Last force limit written per gripper, so the cap is not re-sent per tick.
+        self._applied_effort: dict[int, float] = {}
         self._telemetry_period_s = 1.0 / state_rate_hz
         self._last_publish_s = 0.0
 
@@ -103,6 +108,11 @@ class IsaacBridgeExtension:
             )
             for gripper in self._grippers
         }
+        self._camera_sensor = None
+        if cameras_enabled:
+            cameras = load_camera_configs(_CAMERAS_CONFIG_PATH)
+            validate_camera_slots(cameras, COLOR_CAMERA_SLOT_NAMES, RGBD_CAMERA_SLOT_NAMES)
+            self._camera_sensor = IsaacCameraSensor(_ROOT_ARTICULATION_PRIM, cameras, io)
         self._joint_index: dict[str, int] = {}
         self._ready: bool = False
 
@@ -130,6 +140,7 @@ class IsaacBridgeExtension:
             *self._arm_actuators.values(),
             *self._gripper_actuators.values(),
             *self._gripper_sensors.values(),
+            *([self._camera_sensor] if self._camera_sensor is not None else []),
         ]
 
     def _try_setup(self) -> bool:
@@ -182,6 +193,8 @@ class IsaacBridgeExtension:
             return
 
         self._apply_commands()
+        if self._camera_sensor is not None:
+            self._camera_sensor.step()
 
         now = time.monotonic()
         if now - self._last_publish_s < self._telemetry_period_s:
@@ -206,9 +219,18 @@ class IsaacBridgeExtension:
             )
 
         for gripper in self._grippers:
-            opening = self._io.latest_gripper_command(gripper["gripper_id"])
-            if opening is None:
+            command = self._io.latest_gripper_command(gripper["gripper_id"])
+            if command is None:
                 continue
+            opening, max_effort = command
+            # Re-applied only on change: the ceiling write is a model-wide
+            # articulation call, not a per-tick target.
+            if self._applied_effort.get(gripper["gripper_id"]) != max_effort:
+                # Recorded only once written, so a not-ready tick retries.
+                if self._gripper_actuators[gripper["gripper_id"]].set_force_limit(
+                    gripper["fingers"], max_effort
+                ):
+                    self._applied_effort[gripper["gripper_id"]] = max_effort
             # Map the opening fraction onto each finger's own signed travel, so
             # the same command drives prismatic (v1) and revolute (v2) fingers.
             travels = self._gripper_travels[gripper["gripper_id"]]

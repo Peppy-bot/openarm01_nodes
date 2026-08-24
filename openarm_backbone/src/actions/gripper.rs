@@ -1,5 +1,5 @@
 //! Gripper move-action admission: the `move_gripper` handler the backbone exposes.
-//! Mirrors the arm move admission exactly: validate the goal (gripper_id,
+//! Mirrors the arm move admission exactly: validate the goal (gripper_name,
 //! finiteness, the [0, 1] opening range, a non-negative effort cap), claim
 //! the side's single-flight slot, and
 //! hand the accepted goal to the coordinator over its gripper goal channel. The
@@ -10,14 +10,14 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use peppygen::exposed_actions::move_gripper::{ActionHandle, GoalDecision};
+use peppygen::exposed_actions::limb_motion::move_gripper::{ActionHandle, GoalDecision};
 use peppygen::{NodeRunner, Result};
 use tokio::sync::mpsc;
 use tracing::error;
 
-use crate::Side;
 use crate::actions::claim;
 use crate::coordinator::GripperGoal;
+use crate::types::Side;
 
 /// Expose `move_gripper`: validate + claim, then hand the goal to the
 /// coordinator. The coordinator releases the busy slot when the move ends.
@@ -31,8 +31,8 @@ pub async fn run_move_gripper(
         let accepted = handle
             .handle_goal_next_request(|req| {
                 let d = &req.data;
-                let Some(idx) = Side::from_gripper_id(d.gripper_id).map(Side::index) else {
-                    return Ok(GoalDecision::reject("gripper_id out of range"));
+                let Some(idx) = Side::from_gripper_name(&d.gripper_name).map(Side::index) else {
+                    return Ok(GoalDecision::reject(Side::UNKNOWN_GRIPPER_NAME));
                 };
                 if !d.opening.is_finite() {
                     return Ok(GoalDecision::reject("non-finite gripper opening"));
@@ -56,7 +56,7 @@ pub async fn run_move_gripper(
             })
             .await?;
         let Some(ctx) = accepted else { return Ok(()) };
-        let idx = Side::from_gripper_id(ctx.request().data.gripper_id)
+        let idx = Side::from_gripper_name(&ctx.request().data.gripper_name)
             .map(Side::index)
             .expect("validated on accept");
         let opening = ctx.request().data.opening;

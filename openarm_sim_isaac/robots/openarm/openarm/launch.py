@@ -82,22 +82,43 @@ class _SimHandoff:
     state_rate_hz: int
     headless: bool
     hardware_version: str
+    cameras_enabled: bool
 
 
 _handoff: dict[str, _SimHandoff] = {}
+_setup_error: dict[str, Exception] = {}
 _handoff_ready = threading.Event()
 
 
 async def setup(params, node_runner) -> list:
     """Set up Peppy IO and hand resolved parameters to Isaac."""
 
+    # A setup failure must reach main() promptly: record it and release the
+    # handoff wait, so the process dies on the real error instead of the
+    # 30s parameter timeout.
+    try:
+        return await _node_setup(params, node_runner)
+    except Exception as exc:
+        _setup_error["value"] = exc
+        _handoff_ready.set()
+        raise
+
+
+async def _node_setup(params, node_runner) -> list:
+    # Typed peppygen pub/sub lives on this loop; declare publishers and start
+    # the command-consume tasks before the sim thread starts reading from them.
     sys.path.insert(
         0,
         str(_ROBOTS_DIR),
     )
-
     from sim_topics import SimTopicIO
     from scene_actions import SceneActionIO
+
+    if params.cameras_enabled and _version(params.hardware_version) != "v2":
+        raise ValueError(
+            "cameras_enabled requires hardware_version v2: the camera geometry "
+            "in config/cameras.json5 mounts on v2 links only"
+        )
 
     loop = asyncio.get_running_loop()
 
@@ -121,6 +142,7 @@ async def setup(params, node_runner) -> list:
         state_rate_hz=params.state_rate_hz,
         headless=params.headless,
         hardware_version=params.hardware_version,
+        cameras_enabled=params.cameras_enabled,
     )
 
     _handoff_ready.set()
@@ -167,6 +189,10 @@ def main() -> None:
             "node parameters not resolved within 30s"
         )
 
+    if "value" in _setup_error:
+        raise RuntimeError(
+            "node setup failed"
+        ) from _setup_error["value"]
     handoff = _handoff["value"]
 
     # --------------------------------------------------------------
@@ -290,6 +316,7 @@ def main() -> None:
         handoff.io,
         handoff.scene_actions,
         handoff.state_rate_hz,
+        handoff.cameras_enabled,
     ).run()
 
 

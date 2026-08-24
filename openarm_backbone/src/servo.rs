@@ -17,7 +17,7 @@
 //! [`MAX_SERVO_S`] as its lone backstop.
 //!
 //! Tuning constants are anchored to MoveIt Servo's defaults (`servo_parameters.yaml`)
-//! where the mechanism is the same: the reference slew rate and the convergence
+//! where the mechanism is the same: the smoothing cutoff and the convergence
 //! tolerances. The singularity strategy is deliberately the opposite of MoveIt's,
 //! which halts at a singularity (a plain pseudo-inverse with velocity scaled to zero
 //! by the Jacobian condition number); this servo damps (DLS) to pass THROUGH one,
@@ -27,31 +27,18 @@
 use std::time::Duration;
 
 use control_core::filters::ButterworthFilter;
-use srs_model::Arm;
+use control_core::servo::{ORIENTATION_TOLERANCE_RAD, POSITION_TOLERANCE_M};
 use srs_model::nalgebra::{Isometry3, Rotation3, Vector3};
+use srs_model::{Arm, DEFAULT_DLS_LAMBDA};
 
 use crate::chase::rate_limited;
 use crate::trajectory::{PlanLimits, interpolate_pose};
-use crate::{ARM_DOF, JointVec};
+use crate::types::{ARM_DOF, JointVec};
 
-/// Damping for the damped-least-squares resolved-rate step (Chiaverini/Nakamura):
-/// heavy enough to stay bounded through singular postures, light enough not to
-/// visibly lag the reference. No MoveIt analogue (MoveIt uses no damping); 0.05 is
-/// the streaming jog's field-proven value, shared with it via [`Arm::rate_step`].
-const DLS_LAMBDA: f64 = 0.05;
-/// Max angular velocity of the reference (rad/s): MoveIt Servo's `scale.rotational`
-/// default. Position walks at the operator's end-effector speed cap (the analogue
-/// of MoveIt's `scale.linear`), which the launcher sets.
-const ROT_RATE_RAD_S: f64 = 0.8;
 /// The reference stops walking while the arm is farther than this from it, so a
 /// wall crossing is ground through instead of the reference running away. Bespoke
 /// to the leashed-reference law; no MoveIt analogue.
 const LEASH_M: f64 = 0.05;
-/// A goal counts as reached within this position / orientation slack: MoveIt Servo's
-/// `pose_tracking.linear_tolerance` / `angular_tolerance` defaults, shared with the
-/// streaming jog's convergence thresholds.
-const POS_CONVERGED_M: f64 = 1e-3;
-const ROT_CONVERGED_RAD: f64 = 1e-2;
 /// Hard ceiling on a servo move. The plan-time rollout runs at most this long; a
 /// goal that has not converged by then is taken as unreachable and rejected, and
 /// the runtime aborts a move still going past it (the rare case where the
@@ -66,6 +53,63 @@ pub const MAX_SERVO_S: f64 = 30.0;
 /// that is ~18.7 Hz, applied here to the steeper second-order filter so it smooths at
 /// least as much.
 const SERVO_SMOOTHING_CUTOFF_HZ: f64 = 18.7;
+
+/// The per-joint command smoother for one control period, or a refusal when
+/// the period cannot carry the cutoff (Nyquist at `0.5 / period` must sit
+/// above it). Built once at setup, where a bad `control_rate_hz` can still be
+/// refused; every [`ServoState`] then copies the value as proof it exists.
+pub fn smoothing_for(
+    control_period: Duration,
+) -> Result<ButterworthFilter, control_core::filters::FilterError> {
+    ButterworthFilter::from_cutoff(SERVO_SMOOTHING_CUTOFF_HZ, control_period.as_secs_f64())
+}
+
+/// The end-effector speed budget a Cartesian step runs under: the launcher's
+/// linear cap and the angular slew cap.
+#[derive(Clone, Copy)]
+pub struct EeCaps {
+    pub linear_m_s: f64,
+    pub angular_rad_s: f64,
+}
+
+/// One damped resolved-rate step of the joints from `q` toward `target`, given
+/// the end-effector pose `ee` already computed at `q` (every caller has it).
+///
+/// The task error is capped before it is resolved: position at the speed
+/// budget, orientation at the slew budget. A target metres away produces the
+/// same bounded step as one millimetres away, which is what lets the same law
+/// serve a planned move and a live stream. Linear error has a 1 mm converged
+/// deadband; rotation has none (it is the tracking floor of a live pose
+/// stream).
+pub fn rate_step_toward(
+    model: &mut Arm,
+    q: &JointVec,
+    ee: &Isometry3<f64>,
+    target: &Isometry3<f64>,
+    max_joint_velocity_rad_s: &JointVec,
+    caps: EeCaps,
+    dt_s: f64,
+) -> JointVec {
+    let dp_world = target.translation.vector - ee.translation.vector;
+    let dp_world = if dp_world.norm() > POSITION_TOLERANCE_M {
+        dp_world * (caps.linear_m_s * dt_s / dp_world.norm()).min(1.0)
+    } else {
+        Vector3::zeros()
+    };
+    let rot_err: Rotation3<f64> = (target.rotation * ee.rotation.inverse()).to_rotation_matrix();
+    let dw_world = rot_err
+        .axis_angle()
+        .map(|(axis, angle)| axis.into_inner() * angle.min(caps.angular_rad_s * dt_s))
+        .unwrap_or_else(Vector3::zeros);
+    model.rate_step(
+        q,
+        dp_world,
+        dw_world,
+        max_joint_velocity_rad_s,
+        dt_s,
+        DEFAULT_DLS_LAMBDA,
+    )
+}
 
 /// One servo move's mutable state: where the reference is on the line, and the
 /// per-joint output smoothing. The joint state lives with the caller (the planner's
@@ -98,16 +142,12 @@ impl ServoState {
         (self.end.translation.vector - ee.translation.vector).norm()
     }
 
-    pub fn new(start: Isometry3<f64>, end: Isometry3<f64>, control_period: Duration) -> Self {
-        let ts = control_period.as_secs_f64();
+    pub fn new(start: Isometry3<f64>, end: Isometry3<f64>, smoothing: ButterworthFilter) -> Self {
         Self {
             start,
             end,
             reference_s: 0.0,
-            smoothing: std::array::from_fn(|_| {
-                ButterworthFilter::from_cutoff(SERVO_SMOOTHING_CUTOFF_HZ, ts)
-                    .expect("servo smoothing cutoff is valid for the control period")
-            }),
+            smoothing: [smoothing; ARM_DOF],
         }
     }
 
@@ -119,7 +159,7 @@ impl ServoState {
         model: &mut Arm,
         q: &JointVec,
         max_joint_velocity_rad_s: &JointVec,
-        max_ee_velocity_m_s: f64,
+        caps: EeCaps,
         dt: Duration,
     ) -> ServoStep {
         let dt_s = dt.as_secs_f64();
@@ -130,8 +170,8 @@ impl ServoState {
         let goal_pos_err = (self.end.translation.vector - ee.translation.vector).norm();
         let goal_rot_err = ee.rotation.angle_to(&self.end.rotation);
         if self.reference_s >= 1.0
-            && goal_pos_err < POS_CONVERGED_M
-            && goal_rot_err < ROT_CONVERGED_RAD
+            && goal_pos_err < POSITION_TOLERANCE_M
+            && goal_rot_err < ORIENTATION_TOLERANCE_RAD
         {
             return ServoStep::Converged(*q);
         }
@@ -141,35 +181,21 @@ impl ServoState {
         let line_len = (self.end.translation.vector - self.start.translation.vector).norm();
         let reference = interpolate_pose(&self.start, &self.end, self.reference_s);
         let ref_pos_err = (reference.translation.vector - ee.translation.vector).norm();
-        if line_len < POS_CONVERGED_M {
+        if line_len < POSITION_TOLERANCE_M {
             self.reference_s = 1.0;
         } else if ref_pos_err < LEASH_M {
-            self.reference_s = (self.reference_s + max_ee_velocity_m_s * dt_s / line_len).min(1.0);
+            self.reference_s = (self.reference_s + caps.linear_m_s * dt_s / line_len).min(1.0);
         }
         let reference = interpolate_pose(&self.start, &self.end, self.reference_s);
 
-        // One damped resolved-rate step toward the reference: position error
-        // capped at the speed budget, orientation at the slew budget, realized
-        // by the shared [`Arm::rate_step`] (velocity-scaled, limit-clamped).
-        let dp_world = reference.translation.vector - ee.translation.vector;
-        let dp_world = if dp_world.norm() > POS_CONVERGED_M {
-            dp_world * (max_ee_velocity_m_s * dt_s / dp_world.norm()).min(1.0)
-        } else {
-            Vector3::zeros()
-        };
-        let rot_err: Rotation3<f64> =
-            (reference.rotation * ee.rotation.inverse()).to_rotation_matrix();
-        let dw_world = rot_err
-            .axis_angle()
-            .map(|(axis, angle)| axis.into_inner() * angle.min(ROT_RATE_RAD_S * dt_s))
-            .unwrap_or_else(Vector3::zeros);
-        let next = model.rate_step(
+        let next = rate_step_toward(
+            model,
             q,
-            dp_world,
-            dw_world,
+            &ee,
+            &reference,
             max_joint_velocity_rad_s,
+            caps,
             dt_s,
-            DLS_LAMBDA,
         );
         // Smooth each joint to bound the command's jerk through the reconfiguration,
         // then re-clamp the step to the joint velocity limit: a Butterworth overshoots
@@ -197,18 +223,12 @@ pub fn rollout(
     seed: JointVec,
     limits: &PlanLimits,
 ) -> Option<f64> {
-    let mut state = ServoState::new(*start, *end, limits.control_period);
+    let mut state = ServoState::new(*start, *end, limits.smoothing);
     let mut q = seed;
     let dt = limits.control_period;
     let steps = (MAX_SERVO_S / dt.as_secs_f64()).ceil() as usize;
     for k in 0..steps {
-        match state.step(
-            model,
-            &q,
-            limits.max_joint_velocity_rad_s,
-            limits.max_ee_velocity_m_s,
-            dt,
-        ) {
+        match state.step(model, &q, limits.max_joint_velocity_rad_s, limits.ee, dt) {
             ServoStep::Stepped(next) => q = next,
             ServoStep::Converged(_) => return Some(k as f64 * dt.as_secs_f64()),
         }

@@ -11,9 +11,12 @@
 
 use std::sync::Arc;
 
+use control_core::minimum_jerk::{self, QUINTIC_PEAK_VELOCITY};
 use srs_model::nalgebra::{Quaternion, UnitQuaternion};
 
 use crate::pose::ArmModels;
+use openarm_description::{READY_R, Side as ModelSide, mirror};
+
 use crate::state::{ARM_DOF, BySide, GesturePhase, GesturePlayback, SIDES, Side};
 
 /// Dense bake grid (s). Playback interpolates linearly between grid samples, so
@@ -34,26 +37,27 @@ const LIMIT_SLACK_RAD: f64 = 1e-9;
 
 /// Lead-in sizing: a quintic blend from the held target to the first sample,
 /// paced at half the slowest involved joint's velocity budget and clamped to a
-/// comfortable band. 1.875 = 15/8, the peak derivative of the quintic
-/// smoothstep.
-const QUINTIC_PEAK_VELOCITY: f64 = 1.875;
+/// comfortable band.
 const LEAD_IN_SPEED_FRACTION: f64 = 0.5;
 const LEAD_IN_MIN_S: f64 = 0.8;
 const LEAD_IN_MAX_S: f64 = 4.0;
 
-/// Mirror a right-arm pose onto the left arm: j1..j3 flip sign, elbow and
-/// wrist keep it (the same convention as the Ready preset).
-const fn mirror(q: [f64; ARM_DOF]) -> [f64; ARM_DOF] {
-    [-q[0], -q[1], -q[2], q[3], q[4], q[5], q[6]]
-}
+/// The Ready workspace pose per side, from the description's canonical
+/// postures (the backbone's move_to_ready lands on the same values). The
+/// panel's Ready Pose button drives the same pose, served to it through the
+/// snapshot, so the whole system has exactly one definition.
+pub(crate) const READY: BySide<[f64; ARM_DOF]> = BySide::new(
+    openarm_description::ready(ModelSide::Left),
+    openarm_description::ready(ModelSide::Right),
+);
 
-/// The right-arm Ready pose; the left is its mirror.
-const READY_R: [f64; ARM_DOF] = [0.15, 0.40, -0.48, 0.95, 0.0, 0.0, 0.0];
-
-/// The Ready workspace pose per side: the anchor every gesture starts from and
-/// returns to. The panel's Ready Pose button drives the same pose, served to it
-/// through the snapshot, so it has exactly one definition.
-pub(crate) const READY: BySide<[f64; ARM_DOF]> = BySide::new(mirror(READY_R), READY_R);
+/// The Home park pose per side, from the same canonical postures: the elbow
+/// sits on the description's floor rather than the straight-arm singularity.
+/// The panel's Home Pose button and the backbone's move_to_home land here.
+pub(crate) const HOME: BySide<[f64; ARM_DOF]> = BySide::new(
+    openarm_description::home(ModelSide::Left),
+    openarm_description::home(ModelSide::Right),
+);
 
 // --------------------------- authoring types ---------------------------
 
@@ -169,11 +173,10 @@ impl Registry {
 /// gesture drives it, the gripper opening.
 pub type GestureSamples = BySide<Option<([f64; ARM_DOF], Option<f64>)>>;
 
-/// Quintic smoothstep: s(0)=0, s(1)=1 with zero velocity and acceleration at
-/// both ends, so every blend it paces starts and stops at rest.
+/// The shared quintic profile held at its endpoints: playback evaluates past
+/// the end of a segment, where the pose is the one the segment finished on.
 pub fn quintic_blend(tau: f64) -> f64 {
-    let t = tau.clamp(0.0, 1.0);
-    t * t * t * (10.0 + t * (-15.0 + 6.0 * t))
+    minimum_jerk::quintic(tau.clamp(0.0, 1.0)).0
 }
 
 /// Size the lead-in blend so the fastest joint peaks at
@@ -830,21 +833,13 @@ mod tests {
     }
 
     #[test]
-    fn quintic_blend_boundaries_and_monotone() {
+    fn the_blend_holds_at_its_endpoints() {
+        // The profile itself is control_core's; what this wrapper owns is the
+        // hold, since playback evaluates past the end of a segment.
         assert_eq!(quintic_blend(0.0), 0.0);
         assert_eq!(quintic_blend(1.0), 1.0);
-        let eps = 1e-6;
-        assert!(quintic_blend(eps) / eps < 1e-3, "nonzero start velocity");
-        assert!(
-            (1.0 - quintic_blend(1.0 - eps)) / eps < 1e-3,
-            "nonzero end velocity"
-        );
-        let mut prev = 0.0;
-        for k in 1..=1000 {
-            let s = quintic_blend(k as f64 / 1000.0);
-            assert!(s >= prev, "not monotone at {k}");
-            prev = s;
-        }
+        assert_eq!(quintic_blend(-5.0), 0.0);
+        assert_eq!(quintic_blend(5.0), 1.0);
     }
 
     #[test]

@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
 
+use control_core::minimum_jerk::{quintic, velocity_limited_duration};
 use srs_model::nalgebra::{Isometry3, Translation3};
 use srs_model::{Arm, ArmAnglePolicy};
 
-use crate::{ARM_DOF, JointVec};
+use crate::servo::EeCaps;
+use crate::types::{ARM_DOF, JointVec};
 
 /// Quintic minimum-jerk trajectory in joint space.
 pub struct JointTrajectory {
@@ -29,7 +31,11 @@ impl JointTrajectory {
             .zip(max_velocity_rad_s.iter())
             .map(|((s, e), v)| (e - s).abs() / v)
             .fold(0.0_f64, f64::max);
-        let secs = velocity_limited_duration(peak_ratio, requested_duration_secs);
+        // Both inputs are guaranteed upstream: the joint velocity limits are
+        // asserted finite and positive at boot, and a move's requested duration
+        // is refused at the action boundary unless it is finite and in range.
+        let secs = velocity_limited_duration(peak_ratio, requested_duration_secs)
+            .expect("velocity limits and requested duration are validated before planning");
         Self {
             start,
             end,
@@ -180,8 +186,11 @@ fn line_duration_cap(requested_duration_secs: f64) -> f64 {
 /// control period the servo rollout steps at.
 pub struct PlanLimits<'a> {
     pub max_joint_velocity_rad_s: &'a JointVec,
-    pub max_ee_velocity_m_s: f64,
+    pub ee: EeCaps,
     pub control_period: Duration,
+    /// The servo's per-joint command smoother, built for `control_period` at
+    /// setup: carrying it is the proof the period can run it.
+    pub smoothing: control_core::filters::ButterworthFilter,
 }
 
 /// How an accepted move_arm goal executes, decided by [`plan_cartesian`].
@@ -300,9 +309,12 @@ pub fn plan_cartesian(
     ];
     // The EE speed cap is not enforced per tick on the move path (unlike Follow), so
     // size the duration to respect it up front alongside the joint limits: a short
-    // requested duration must not drive the hand past max_ee_velocity_m_s.
-    let ee_ratio =
-        (end.translation.vector - start.translation.vector).norm() / limits.max_ee_velocity_m_s;
+    // requested duration must not drive the hand past either EE cap. Both axes
+    // count, since a pure reorientation covers no distance at all.
+    let travel_ratio =
+        (end.translation.vector - start.translation.vector).norm() / limits.ee.linear_m_s;
+    let turn_ratio = (end.rotation * start.rotation.inverse()).angle() / limits.ee.angular_rad_s;
+    let ee_ratio = travel_ratio.max(turn_ratio);
     for (policy, steer_elbow) in tiers {
         let Some(walk) = walk_line(
             model,
@@ -314,8 +326,10 @@ pub fn plan_cartesian(
         ) else {
             continue;
         };
+        // A budget that cannot size a duration cannot be planned as a line.
         let duration_s =
-            velocity_limited_duration(walk.peak_ratio.max(ee_ratio), requested_duration_secs);
+            velocity_limited_duration(walk.peak_ratio.max(ee_ratio), requested_duration_secs)
+                .ok()?;
         if duration_s <= duration_cap {
             return Some(CartesianPlan::Line {
                 duration_s,
@@ -327,35 +341,6 @@ pub fn plan_cartesian(
     // No line tracks: prove the servo law reaches the pose before accepting it.
     crate::servo::rollout(model, start, end, seed, limits)
         .map(|duration_s| CartesianPlan::Servo { duration_s })
-}
-
-// --- Shared blend / sizing helpers -----------------------------------------
-
-/// Peak normalised velocity of the quintic blend `s(τ)`: `ds/dτ` at τ = 0.5. On a
-/// quintic of duration `T`, the peak speed of a quantity changing by Δ over the
-/// blend is `QUINTIC_PEAK_VELOCITY · Δ / T`, which is how a move's duration is
-/// sized to velocity limits (see [`velocity_limited_duration`]).
-const QUINTIC_PEAK_VELOCITY: f64 = 1.875;
-
-/// Quintic minimum-jerk blend `s(τ)` and its derivative `ds/dτ`, for τ = t/T ∈
-/// [0,1]. `s` runs 0→1 with `s'(0) = s'(1) = 0` and `s''(0) = s''(1) = 0`, so a
-/// path blended by it starts and stops with zero velocity and zero acceleration,
-/// the smoothest profile that hits fixed boundary conditions. Shared by the
-/// joint-space and Cartesian trajectories so both blend identically.
-fn quintic(tau: f64) -> (f64, f64) {
-    let s = ((6.0 * tau - 15.0) * tau + 10.0) * tau * tau * tau;
-    let ds_dtau = ((30.0 * tau - 60.0) * tau + 30.0) * tau * tau;
-    (s, ds_dtau)
-}
-
-/// Smallest duration (s) that keeps a quintic-blended motion within its velocity
-/// limits, floored at `requested_secs` so a caller can ask for a slower move.
-/// `peak_velocity_ratio` is the largest `|Δ/Δs| / v_max` over the motion (change
-/// per unit blend parameter against that component's limit); the quintic's peak
-/// factor scales it to the minimum feasible `T`. Shared by the joint trajectory
-/// (ratio from joint deltas) and the Cartesian planner (ratio from the IK'd path).
-fn velocity_limited_duration(peak_velocity_ratio: f64, requested_secs: f64) -> f64 {
-    requested_secs.max(QUINTIC_PEAK_VELOCITY * peak_velocity_ratio)
 }
 
 /// Interpolate between two poses at blend parameter `s` ∈ [0,1]: position by a
@@ -383,6 +368,7 @@ pub(crate) fn interpolate_pose(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use control_core::minimum_jerk::QUINTIC_PEAK_VELOCITY;
     use openarm_description::HardwareVersion;
     use srs_model::nalgebra::{Quaternion, Translation3};
 
@@ -395,7 +381,7 @@ mod tests {
     ];
 
     fn v2_right_arm() -> Arm {
-        crate::arm_model(HardwareVersion::V2, "openarm_right_base_link")
+        crate::arm_model(HardwareVersion::V2, openarm_description::Side::Right)
             .expect("bundled v2 URDF builds")
     }
 
@@ -411,22 +397,47 @@ mod tests {
         )
     }
 
+    /// A field-recorded pose, in the chain-tip frame it was captured in, re-expressed
+    /// at the tool the planner solves for. The recorded numbers stay verbatim and the
+    /// arm runs the motion that was reported, which is what makes these field cases
+    /// regressions rather than arbitrary coordinates. Reads the model's own mounted
+    /// tool, so the conversion follows the description.
+    fn recorded_tip_pose(model: &Arm, position: [f64; 3], quat_xyzw: [f64; 4]) -> Isometry3<f64> {
+        world_pose(position, quat_xyzw) * model.tool()
+    }
+
+    /// World-frame chain-tip pose at `q`: the frame the field readouts below are
+    /// recorded in.
+    fn tip_world(model: &mut Arm, q: &JointVec) -> Isometry3<f64> {
+        let tip = model.at(q).tip_pose();
+        model.world_pose(&tip)
+    }
+
     const TEST_EE_CAP_M_S: f64 = 0.5;
+    const TEST_EE_CAP_RAD_S: f64 = 0.8;
     const TEST_DT: Duration = Duration::from_millis(10);
 
     fn v2_limits() -> PlanLimits<'static> {
         PlanLimits {
             max_joint_velocity_rad_s: &V_MAX_V2,
-            max_ee_velocity_m_s: TEST_EE_CAP_M_S,
+            ee: EeCaps {
+                linear_m_s: TEST_EE_CAP_M_S,
+                angular_rad_s: TEST_EE_CAP_RAD_S,
+            },
             control_period: TEST_DT,
+            smoothing: crate::servo::smoothing_for(TEST_DT).unwrap(),
         }
     }
 
     fn v1_limits() -> PlanLimits<'static> {
         PlanLimits {
             max_joint_velocity_rad_s: &V_MAX,
-            max_ee_velocity_m_s: TEST_EE_CAP_M_S,
+            ee: EeCaps {
+                linear_m_s: TEST_EE_CAP_M_S,
+                angular_rad_s: TEST_EE_CAP_RAD_S,
+            },
             control_period: TEST_DT,
+            smoothing: crate::servo::smoothing_for(TEST_DT).unwrap(),
         }
     }
 
@@ -448,11 +459,19 @@ mod tests {
         end: &Isometry3<f64>,
         seed: JointVec,
     ) -> JointVec {
-        let mut state = crate::servo::ServoState::new(*start, *end, TEST_DT);
+        let mut state = crate::servo::ServoState::new(
+            *start,
+            *end,
+            crate::servo::smoothing_for(TEST_DT).unwrap(),
+        );
         let mut q = seed;
         let steps = (crate::servo::MAX_SERVO_S / TEST_DT.as_secs_f64()).ceil() as usize;
         for _ in 0..steps {
-            match state.step(model, &q, &V_MAX_V2, TEST_EE_CAP_M_S, TEST_DT) {
+            let caps = EeCaps {
+                linear_m_s: TEST_EE_CAP_M_S,
+                angular_rad_s: TEST_EE_CAP_RAD_S,
+            };
+            match state.step(model, &q, &V_MAX_V2, caps, TEST_DT) {
                 crate::servo::ServoStep::Stepped(next) => {
                     for i in 0..ARM_DOF {
                         let v = (next[i] - q[i]).abs() / TEST_DT.as_secs_f64();
@@ -489,11 +508,13 @@ mod tests {
     #[test]
     fn cross_body_pull_runs_the_guarded_servo() {
         let mut model = v2_right_arm();
-        let start = world_pose(
+        let start = recorded_tip_pose(
+            &model,
             [0.0715597403410507, -0.179708420505458, 0.448631054180598],
             REPRO_QUAT,
         );
-        let end = world_pose(
+        let end = recorded_tip_pose(
+            &model,
             [-0.178440259658949, -0.179708420505458, 0.448631054180598],
             REPRO_QUAT,
         );
@@ -524,12 +545,13 @@ mod tests {
     #[test]
     fn pull_from_ready_to_x_minus_02_reaches_via_servo() {
         let mut model = v2_right_arm();
-        let start = {
-            let ee = model.at(&READY).ee_pose();
-            model.world_pose(&ee)
-        };
-        let mut end = start;
-        end.translation.vector.x = -0.2;
+        // The recorded pull is a tip coordinate, so -0.2 is placed there and carried
+        // to the tool: the same physical motion, in the frame commanded.
+        let start_tip = tip_world(&mut model, &READY);
+        let mut end_tip = start_tip;
+        end_tip.translation.vector.x = -0.2;
+        let tool = model.tool();
+        let (start, end) = (start_tip * tool, end_tip * tool);
         let plan = plan_cartesian(&mut model, &start, &end, READY, &v2_limits(), 2.0)
             .expect("the pull must be reachable, as streaming proves live");
         if let CartesianPlan::Servo { duration_s } = plan {
@@ -610,6 +632,11 @@ mod tests {
     // as progress. Exercises the law directly with a large in-place
     // reorientation, where reference advance and position shrink both go quiet
     // while the wrist is still turning.
+    //
+    // In place means about the grasp point, so the wrist orbits it rather than
+    // spinning where it is, and from Ready the elbow reaches its singularity floor
+    // beyond ~0.8 rad. This turns as far as that posture allows; the servo path
+    // under test is the same one either side of that bound.
     #[test]
     fn pure_reorientation_converges_in_the_servo_law() {
         let mut model = v2_right_arm();
@@ -618,7 +645,7 @@ mod tests {
             model.world_pose(&ee)
         };
         let mut end = start;
-        end.rotation = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 1.2) * end.rotation;
+        end.rotation = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 0.7) * end.rotation;
         run_servo_to_convergence(&mut model, &start, &end, READY);
     }
 
@@ -630,11 +657,13 @@ mod tests {
     #[test]
     fn small_nudge_after_a_servo_move_stays_a_quiet_line() {
         let mut model = v2_right_arm();
-        let start = world_pose(
+        let start = recorded_tip_pose(
+            &model,
             [0.0715597403410507, -0.179708420505458, 0.448631054180598],
             REPRO_QUAT,
         );
-        let end = world_pose(
+        let end = recorded_tip_pose(
+            &model,
             [-0.178440259658949, -0.179708420505458, 0.448631054180598],
             REPRO_QUAT,
         );
@@ -782,18 +811,6 @@ mod tests {
     }
 
     #[test]
-    fn quintic_blend_profile() {
-        // s runs 0 -> 1 with zero slope at both ends; peak slope QUINTIC_PEAK_VELOCITY
-        // at the midpoint. This is the velocity feedforward shape the sampler rides.
-        let (s0, d0) = quintic(0.0);
-        let (sh, dh) = quintic(0.5);
-        let (s1, d1) = quintic(1.0);
-        assert!(approx_eq(s0, 0.0) && approx_eq(d0, 0.0));
-        assert!(approx_eq(sh, 0.5) && approx_eq(dh, QUINTIC_PEAK_VELOCITY));
-        assert!(approx_eq(s1, 1.0) && approx_eq(d1, 0.0));
-    }
-
-    #[test]
     fn is_complete_only_after_duration() {
         let q = [0.0; ARM_DOF];
         let traj = JointTrajectory::new(q, q, V_MAX, 0.1);
@@ -806,7 +823,7 @@ mod tests {
 
     fn left_arm() -> Arm {
         let version = openarm_description::HardwareVersion::V1;
-        crate::arm_model(version, version.base_link(openarm_description::Side::Left))
+        crate::arm_model(version, openarm_description::Side::Left)
             .expect("build left arm from bundled URDF")
     }
 
@@ -859,8 +876,12 @@ mod tests {
         let cap = 0.05; // tight EE cap (m/s) so it binds the duration, not the joints
         let limits = PlanLimits {
             max_joint_velocity_rad_s: &V_MAX,
-            max_ee_velocity_m_s: cap,
+            ee: EeCaps {
+                linear_m_s: cap,
+                angular_rad_s: TEST_EE_CAP_RAD_S,
+            },
             control_period: TEST_DT,
+            smoothing: crate::servo::smoothing_for(TEST_DT).unwrap(),
         };
         let Some(CartesianPlan::Line { duration_s, .. }) =
             plan_cartesian(&mut arm, &start, &goal, seed, &limits, 0.0)
@@ -1043,15 +1064,15 @@ mod tests {
     fn steered_elbow_tier_engages_on_a_graze() {
         let mut model = v2_right_arm();
         let seed = READY;
-        let start = {
-            let ee = model.at(&seed).ee_pose();
-            model.world_pose(&ee)
-        };
-
-        let mut end = start;
-        end.translation.vector.x = 0.0325;
-        end.translation.vector.y = -0.3125;
-        end.translation.vector.z = 0.6900;
+        // The graze is a tip coordinate, so the target is placed there and carried to
+        // the tool: the same line through the same near-singular posture.
+        let start_tip = tip_world(&mut model, &seed);
+        let mut end_tip = start_tip;
+        end_tip.translation.vector.x = 0.0325;
+        end_tip.translation.vector.y = -0.3125;
+        end_tip.translation.vector.z = 0.6900;
+        let tool = model.tool();
+        let (start, end) = (start_tip * tool, end_tip * tool);
 
         // Held elbow alone cannot track this straight line...
         assert!(
@@ -1073,5 +1094,32 @@ mod tests {
         else {
             panic!("expected a steered-elbow line");
         };
+    }
+
+    // A pure reorientation covers no distance, so only the angular cap can size
+    // it: with the linear term alone a short request would spin the hand as fast
+    // as the joint limits allow.
+    #[test]
+    fn a_pure_reorientation_is_sized_by_the_angular_cap() {
+        let mut model = v2_right_arm();
+        let seed = READY;
+        let start = tip_world(&mut model, &seed) * model.tool();
+        let turn_rad = 0.6;
+        let end = start
+            * Isometry3::from_parts(
+                Translation3::identity(),
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), turn_rad),
+            );
+
+        let Some(CartesianPlan::Line { duration_s, .. }) =
+            plan_cartesian(&mut model, &start, &end, seed, &v2_limits(), 0.1)
+        else {
+            panic!("expected a line for a pure reorientation");
+        };
+        let peak_rad_s = QUINTIC_PEAK_VELOCITY * turn_rad / duration_s;
+        assert!(
+            peak_rad_s <= TEST_EE_CAP_RAD_S + 1e-9,
+            "peak {peak_rad_s} rad/s exceeds the {TEST_EE_CAP_RAD_S} rad/s cap over {duration_s}s"
+        );
     }
 }
