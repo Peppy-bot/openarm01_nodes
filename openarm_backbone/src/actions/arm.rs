@@ -1,5 +1,5 @@
 //! Arm move-action admission: the `move_arm_joints` and `move_arm` handlers the
-//! backbone exposes to the commander. Each validates the goal (arm_id, finiteness,
+//! backbone exposes to the commander. Each validates the goal (arm_name, finiteness,
 //! duration, and joint limits for joint moves) and claims the target arm's
 //! single-flight slot, then hands the accepted goal to that arm's planner over
 //! its goal channel. The planner runs the motion - governed against the other
@@ -36,8 +36,10 @@ pub async fn run_move_arm_joints(
         let accepted = handle
             .handle_goal_next_request(|req| {
                 let d = &req.data;
-                let Some(idx) = Side::from_arm_id(d.arm_id).map(Side::index) else {
-                    return Ok(move_arm_joints::GoalDecision::reject("arm_id out of range"));
+                let Some(idx) = Side::from_arm_name(&d.arm_name).map(Side::index) else {
+                    return Ok(move_arm_joints::GoalDecision::reject(
+                        Side::UNKNOWN_ARM_NAME,
+                    ));
                 };
                 if !d.joint_positions.iter().all(|v| v.is_finite()) {
                     return Ok(move_arm_joints::GoalDecision::reject(
@@ -61,7 +63,7 @@ pub async fn run_move_arm_joints(
             })
             .await?;
         let Some(ctx) = accepted else { return Ok(()) };
-        let idx = Side::from_arm_id(ctx.request().data.arm_id)
+        let idx = Side::from_arm_name(&ctx.request().data.arm_name)
             .map(Side::index)
             .expect("validated on accept");
         let target = ctx.request().data.joint_positions;
@@ -94,8 +96,8 @@ pub async fn run_move_arm(
         let accepted = handle
             .handle_goal_next_request(|req| {
                 let d = &req.data;
-                let Some(idx) = Side::from_arm_id(d.arm_id).map(Side::index) else {
-                    return Ok(move_arm::GoalDecision::reject("arm_id out of range"));
+                let Some(idx) = Side::from_arm_name(&d.arm_name).map(Side::index) else {
+                    return Ok(move_arm::GoalDecision::reject(Side::UNKNOWN_ARM_NAME));
                 };
                 if let Err(reason) = pose_from_wire(d.position, d.orientation) {
                     return Ok(move_arm::GoalDecision::reject(format!(
@@ -114,7 +116,7 @@ pub async fn run_move_arm(
             })
             .await?;
         let Some(ctx) = accepted else { return Ok(()) };
-        let idx = Side::from_arm_id(ctx.request().data.arm_id)
+        let idx = Side::from_arm_name(&ctx.request().data.arm_name)
             .map(Side::index)
             .expect("validated on accept");
         let target = pose_from_wire(ctx.request().data.position, ctx.request().data.orientation)

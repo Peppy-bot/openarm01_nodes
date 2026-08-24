@@ -1,12 +1,13 @@
-// Live self-collision proximity for the UI. Consumes the backbone's `collision_status`
-// stream and reports the nearest-pair distance and link names to the owner, so the
-// panel can show how close the arms are and color it against the governor band.
+// Live self-collision proximity for the UI. Consumes the collision_status
+// contract's stream and reports the nearest-pair distance and link names to the
+// owner, so the panel can show how close the arms are and color it against the
+// governor band.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use peppygen::NodeRunner;
-use peppygen::consumed_topics::backbone::collision_status as backbone_collision_status;
+use peppygen::consumed_topics::collision_status::collision_status;
 use peppylib::runtime::CancellationToken;
 use tokio::sync::mpsc;
 use tracing::error;
@@ -19,7 +20,7 @@ pub async fn run(
     feedback: mpsc::Sender<Feedback>,
     token: CancellationToken,
 ) {
-    let mut subscription = match backbone_collision_status::subscribe(&runner).await {
+    let mut subscription = match collision_status::subscribe(&runner).await {
         Ok(subscription) => subscription,
         Err(e) => {
             error!(error = %e, "collision_status subscribe");

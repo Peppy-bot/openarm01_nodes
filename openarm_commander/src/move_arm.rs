@@ -72,7 +72,7 @@ async fn run(
     info!(side = label, ?position, ?orientation, "fire move_arm");
 
     let goal = limb_motion_move_arm::GoalRequest {
-        arm_id: side.arm_id(),
+        arm_name: side.arm_name().to_string(),
         position,
         orientation,
         duration_s,

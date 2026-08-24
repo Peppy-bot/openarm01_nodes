@@ -62,7 +62,10 @@ async fn panel_commands_drive_backbone_and_recorder() -> peppygen::Result<()> {
         .move_arm_joints
         .next_goal(Duration::from_secs(10))
         .await?;
-    assert_eq!(pending.request.arm_id, 0, "left arm is wire id 0");
+    assert_eq!(
+        pending.request.arm_name, "left_arm",
+        "left arm goes out under its wire name"
+    );
     assert!(
         helpers::approx_eq(&pending.request.joint_positions, &TARGET_JOINTS),
         "the goal must carry the panel's joints: {:?}",

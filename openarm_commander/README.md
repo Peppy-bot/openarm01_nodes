@@ -52,8 +52,8 @@ peppy stack launch /path/to/ws/launchers-hub/openarm/openarm_v2_teleop_mujoco.js
 ```
 
 You can also run it alone against an already-running stack. Every declared slot
-must be linked at start: the `limb_motion` and `backbone` slots to the backbone
-instance (the discrete moves and the collision_status feed), and each per-side
+must be linked at start: the `limb_motion` and `collision_status` slots to the
+backbone instance (the discrete moves and the proximity feed), and each per-side
 state slot to that side's arm or gripper instance (sim followers here, the
 drivers on real hardware). The required parameters have no defaults, so they
 are supplied too:
@@ -63,8 +63,8 @@ peppy node run openarm_commander:v1 \
     command_rate_hz=100 hardware_version=v2 max_ee_velocity_m_s=0.5 \
     joint_jog_acceleration_rad_s2=10.0 \
     collision_governor_enabled=true d_stop=0.005 d_safe=0.02 \
-    --link backbone@backbone_inst \
     --link limb_motion@backbone_inst \
+    --link collision_status@backbone_inst \
     --link left_arm@backbone_inst/leader_left_arm \
     --link right_arm@backbone_inst/leader_right_arm \
     --link left_gripper@backbone_inst/leader_left_gripper \

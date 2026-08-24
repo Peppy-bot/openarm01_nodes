@@ -1,5 +1,5 @@
 //! Consumed-topic flow with one producer bound per zero_or_more contract slot:
-//! the backbone mock's `collision_status` must surface as the panel's
+//! the collision_status mock's stream must surface as the panel's
 //! proximity readout, the alerts mock's alert must render in the alerts list,
 //! and both contract slots must report as bound.
 //!
@@ -15,7 +15,7 @@ mod helpers;
 use std::time::{Duration, SystemTime};
 
 use peppygen::consumed_topics::alerts::alerts;
-use peppygen::consumed_topics::backbone::collision_status;
+use peppygen::consumed_topics::collision_status::collision_status;
 use peppygen::consumed_topics::motor_health::motor_health;
 use peppygen::fixtures::harness::{Config, Harness};
 
@@ -23,6 +23,7 @@ const PANEL_PORT: u16 = 18633;
 
 fn proximity_msg() -> collision_status::Message {
     collision_status::Message {
+        timestamp: SystemTime::now(),
         distance: 0.0123,
         link_a: "left_link4".to_string(),
         link_b: "right_link4".to_string(),
@@ -123,7 +124,7 @@ async fn consumed_topics_surface_on_the_panel() -> peppygen::Result<()> {
         "proximity never rendered",
         || {
             let msg = proximity_msg();
-            let publisher = &mocks.deps.backbone.collision_status;
+            let publisher = &mocks.deps.collision_status.collision_status;
             async move { publisher.publish(&msg).await }
         },
         |s| !s["proximity"].is_null(),

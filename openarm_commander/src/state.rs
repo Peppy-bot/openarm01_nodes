@@ -17,16 +17,20 @@ pub enum Side {
 }
 
 impl Side {
-    pub fn arm_id(self) -> u8 {
+    /// The wire `arm_name` limb_motion goals carry for this side.
+    pub fn arm_name(self) -> &'static str {
         match self {
-            Self::Left => 0,
-            Self::Right => 1,
+            Self::Left => "left_arm",
+            Self::Right => "right_arm",
         }
     }
 
-    /// The wire `gripper_id` (0 = left, 1 = right); the same 0/1 encoding as the arm.
-    pub fn gripper_id(self) -> u8 {
-        self.arm_id()
+    /// The wire `gripper_name` limb_motion goals carry for this side.
+    pub fn gripper_name(self) -> &'static str {
+        match self {
+            Self::Left => "left_gripper",
+            Self::Right => "right_gripper",
+        }
     }
 
     pub fn label(self) -> &'static str {

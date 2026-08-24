@@ -70,7 +70,7 @@ async fn run(
     info!(side = label, ?joint_positions, "fire move_arm_joints");
 
     let goal = limb_motion_move_arm_joints::GoalRequest {
-        arm_id: side.arm_id(),
+        arm_name: side.arm_name().to_string(),
         joint_positions,
         duration_s,
     };

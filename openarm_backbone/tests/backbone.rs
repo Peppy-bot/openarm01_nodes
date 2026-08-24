@@ -357,7 +357,7 @@ async fn move_arm_joints_streams_a_trajectory_the_arm_follows_to_the_target() ->
     let goal = move_arm_joints::send_goal(
         &harness,
         &move_arm_joints::GoalRequestData {
-            arm_id: 0,
+            arm_name: "left_arm".to_string(),
             joint_positions: target,
             duration_s: 1.0,
         },
@@ -508,7 +508,12 @@ async fn a_closing_command_inside_d_stop_reads_stopped_on_collision_status() -> 
     let deadline = tokio::time::Instant::now() + DEADLINE;
     publish_commands().await?;
     loop {
-        match tokio::time::timeout(READ_WINDOW, harness.emitted.collision_status.next()).await {
+        match tokio::time::timeout(
+            READ_WINDOW,
+            harness.emitted.collision_status_collision_status.next(),
+        )
+        .await
+        {
             Ok(status) => {
                 let status = status?.expect("collision_status subscription open");
                 assert!(status.distance.is_finite());
@@ -531,4 +536,117 @@ async fn a_closing_command_inside_d_stop_reads_stopped_on_collision_status() -> 
     }
 
     harness.shutdown().await
+}
+
+/// The whole-robot limb_state readout: with every follower live (both arms at
+/// [`HOME`], both grippers half open), the emitted snapshot names both limbs,
+/// slices per the contract's rule, and carries the measured values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn limb_states_snapshots_carry_names_counts_and_measured_state() -> peppygen::Result<()> {
+    let (mut harness, mocks) = start_ready_vacant(params()).await?;
+    pump_is_ready(
+        mocks.deps.robot_init.is_ready,
+        Arc::new(AtomicBool::new(true)),
+    );
+    pump_arm_at_home!(
+        mocks.pairings.left_arm_link.joint_states,
+        peppygen::paired_topics::left_arm_link::joint_states
+    );
+    pump_right_arm_and_grippers!(mocks);
+
+    let snapshot = tokio::time::timeout(DEADLINE, harness.emitted.limb_state_limb_states.next())
+        .await
+        .expect("no limb_states snapshot before the deadline")?
+        .expect("limb_states subscription open");
+
+    assert_eq!(snapshot.arm_names, ["left_arm", "right_arm"]);
+    assert_eq!(snapshot.joints_per_arm, [7, 7]);
+    assert_eq!(snapshot.joint_positions.len(), 14);
+    // Both arms park at HOME, so each 7-entry slice echoes the pumps.
+    for (i, v) in snapshot.joint_positions.iter().enumerate() {
+        assert!(
+            (v - HOME[i % 7]).abs() < 1e-9,
+            "joint_positions[{i}] = {v}, pumped {}",
+            HOME[i % 7]
+        );
+    }
+    assert_eq!(snapshot.positions.len(), 6, "3 per arm");
+    assert_eq!(snapshot.orientations.len(), 8, "4 per arm");
+    for (arm, quat) in snapshot.orientations.chunks(4).enumerate() {
+        let norm = quat.iter().map(|v| v * v).sum::<f64>().sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-6,
+            "arm {arm} orientation is not a unit quaternion (norm {norm})"
+        );
+    }
+    assert_eq!(snapshot.gripper_names, ["left_gripper", "right_gripper"]);
+    assert_eq!(snapshot.gripper_openings, [0.5, 0.5]);
+    Ok(())
+}
+
+/// A goal naming no limb of this robot is refused at admission with the name
+/// table quoted, for the arm and gripper moves alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn goals_for_unknown_limb_names_are_refused() -> peppygen::Result<()> {
+    use peppygen::fixtures::exposed_actions::limb_motion::{move_arm_joints, move_gripper};
+
+    let (harness, mocks) = start_ready_vacant(params()).await?;
+    pump_is_ready(
+        mocks.deps.robot_init.is_ready,
+        Arc::new(AtomicBool::new(true)),
+    );
+    pump_arm_at_home!(
+        mocks.pairings.left_arm_link.joint_states,
+        peppygen::paired_topics::left_arm_link::joint_states
+    );
+    pump_right_arm_and_grippers!(mocks);
+
+    // Wait for streaming so the refusal below is the name check, not the
+    // seed gate's blanket refusal.
+    let mut right_wire = mocks.pairings.right_arm_link.joint_setpoints;
+    tokio::time::timeout(DEADLINE, right_wire.next())
+        .await
+        .expect("streaming never began")?
+        .expect("right arm subscription open");
+
+    let goal = move_arm_joints::send_goal(
+        &harness,
+        &move_arm_joints::GoalRequestData {
+            arm_name: "torso".to_string(),
+            joint_positions: HOME,
+            duration_s: 1.0,
+        },
+        peppygen::QoSProfile::Reliable,
+        DEADLINE,
+    )
+    .await?;
+    assert!(!goal.accepted, "a goal for \"torso\" must be refused");
+    assert_eq!(
+        goal.reason.as_deref(),
+        Some(r#"unknown arm_name: this robot's arms are "left_arm" and "right_arm""#)
+    );
+
+    // A gripper goal addressed with an ARM name is a mixup, not a gripper.
+    let goal = move_gripper::send_goal(
+        &harness,
+        &move_gripper::GoalRequestData {
+            gripper_name: "left_arm".to_string(),
+            opening: 0.5,
+            max_effort: 0.0,
+        },
+        peppygen::QoSProfile::Reliable,
+        DEADLINE,
+    )
+    .await?;
+    assert!(
+        !goal.accepted,
+        "a gripper goal for \"left_arm\" must be refused"
+    );
+    assert_eq!(
+        goal.reason.as_deref(),
+        Some(
+            r#"unknown gripper_name: this robot's grippers are "left_gripper" and "right_gripper""#
+        )
+    );
+    Ok(())
 }
