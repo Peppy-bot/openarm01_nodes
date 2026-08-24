@@ -1,112 +1,152 @@
-# OpenArm Isaac Sim 6.0.1 with Commander and Scence/Object Loaders — Quick Start
+# OpenArm Isaac Sim 6.0.1 — Quick Start
 
-# 1. Clone the required repositories
+This setup launches complete simulated OpenArm stack with:
 
-Create a workspace:
+- NVIDIA Isaac Sim 6.0.1
+- Isaac WebRTC browser viewer
+- OpenArm Commander
+- OpenArm Scene Commander
+- Runtime scene loading
+- Runtime object spawning, moving and removal
+- Static and dynamic physics
+- Runtime force application to dynamic objects
+- Simulated OpenArm arms and grippers
 
-```sh
-mkdir -p ~/ws
-cd ~/ws
+
+Check Peppy:
+
+```bash
+peppy info
 ```
 
-Clone:
+If required, check the Peppy service:
 
-```sh
-git clone https://github.com/Peppy-bot/contracts-hub.git
-git clone https://github.com/Peppy-bot/nodes-hub.git
-git clone https://github.com/Peppy-bot/openarm-nodes.git
-git clone https://github.com/Peppy-bot/launchers-hub.git
+```bash
+systemctl --user status peppy.service
 ```
-
-For the current Isaac Sim 6.0.1 development branch:
-
-```sh
-cd ~/ws/openarm-nodes
-git checkout feature/isaacsim-6.0.1-clean
-```
-
-Use the corresponding launcher configuration from `launchers-hub`.
 
 ---
 
-# 2. Register the repositories with Peppy
+# 2. Register the required Git repositories
 
-```sh
-peppy repo add ~/ws/contracts-hub
-peppy repo add ~/ws/openarm-nodes
-peppy repo add ~/ws/nodes-hub
+Make sure to bring development branches directly up with Peppy to avoid shadowing by main.
+
+```bash
+peppy repo add \
+  https://github.com/Peppy-bot/openarm-nodes.git \
+  --ref feature/isaacsim-6.0.1-clean \
+  --top
+
+peppy repo add \
+  https://github.com/Peppy-bot/contracts-hub.git \
+  --ref modern-jaguar \
+  --top
+
+peppy repo add \
+  https://github.com/Peppy-bot/launchers-hub.git \
+  --ref feature/openarm-isaac-browser-stack \
+  --top
+
 peppy repo refresh
 ```
 
-Check:
+Check repository configuration then:
 
-```sh
+```bash
 peppy repo list
 ```
 
-For local development, make sure the local `openarm-nodes` and `nodes-hub` repositories are the versions being used and are not shadowed by duplicate remote repository registrations.
+The important repositories should include:
+
+```text
+launchers-hub
+  ref: feature/openarm-isaac-browser-stack
+
+contracts-hub
+  ref: modern-jaguar
+
+openarm-nodes
+  ref: feature/isaacsim-6.0.1-clean
+```
+
+The OpenArm repository should expose nodes including:
+
+```text
+openarm_arm
+openarm_arm_sim
+openarm_backbone
+openarm_commander
+openarm_gripper
+openarm_gripper_sim
+openarm_isaac_webviewer
+openarm_scene_commander
+openarm_sim_isaac
+```
 
 ---
 
-# 3. Configure Isaac WebRTC
+# Configure Isaac WebRTC
 
-Find IP address of the machine running Isaac Sim:
+Find LAN IP address of machine running Isaac Sim:
 
-```sh
+```bash
 hostname -I
 ```
 
-Choose LAN IP that your browser can reach.
+For example:
 
-Configure it for the Apptainer runtime:
+```text
+192.168.1.120
+```
 
-```sh
+Configure address Isaac should advertise to browser:
+
+```bash
 systemctl --user set-environment \
-  APPTAINERENV_PEPPY_ISAAC_PUBLIC_IP=<ISAAC_HOST_IP> \
+  APPTAINERENV_PEPPY_ISAAC_PUBLIC_IP=192.168.1.120 \
   APPTAINERENV_PEPPY_ISAAC_SIGNAL_PORT=49100 \
   APPTAINERENV_PEPPY_ISAAC_STREAM_PORT=47998
 ```
 
-Restart the Peppy service:
+Replace `192.168.1.120` with the actual IP of the Isaac machine.
 
-```sh
+Restart Peppy:
+
+```bash
 systemctl --user restart peppy.service
 ```
 
 Verify:
 
-```sh
-systemctl --user show-environment | \
-grep APPTAINERENV_PEPPY_ISAAC
+```bash
+systemctl --user show-environment \
+| grep APPTAINERENV_PEPPY_ISAAC
 ```
 
 Expected:
 
 ```text
-APPTAINERENV_PEPPY_ISAAC_PUBLIC_IP=<ISAAC_HOST_IP>
+APPTAINERENV_PEPPY_ISAAC_PUBLIC_IP=192.168.1.120
 APPTAINERENV_PEPPY_ISAAC_SIGNAL_PORT=49100
 APPTAINERENV_PEPPY_ISAAC_STREAM_PORT=47998
 ```
 
-Do not hard-code a machine-specific IP into the repository in case you are on wifi network with DHCP like me.
+Do not hard-code the IP address in the repository. The address may change when using DHCP or Wi-Fi.
 
 ---
 
 # 4. Launch the complete OpenArm Isaac stack
 
-Go to the OpenArm launcher:
+Launch using registered launcher:
 
-```sh
-cd ~/ws/launchers-hub/openarm
+```bash
+peppy stack launch openarm_v2 --with=isaac_sim
 ```
 
-Launch:
+Peppy will resolve, build and launch required nodes.
 
-```sh
-peppy stack launch \
-  ./openarm_v2_teleop_isaac_browser.json5
-```
-# 5. Open Isaac Sim in the browser
+
+# Open the Isaac browser viewer
 
 Open:
 
@@ -114,46 +154,56 @@ Open:
 http://<ISAAC_HOST_IP>:8210
 ```
 
-Use the same IP configured in:
+For example:
 
 ```text
-APPTAINERENV_PEPPY_ISAAC_PUBLIC_IP
+http://192.168.1.120:8210
 ```
 
-when Isaac is advertising a LAN IP.
+The browser viewer displays live Isaac Sim stream.
 
 WebRTC uses:
 
 ```text
-8210/TCP     browser viewer
-49100/TCP    signalling
-47998/UDP    media stream
+8210/TCP     Web viewer
+49100/TCP    WebRTC signalling
+47998/UDP    WebRTC media stream
 ```
+
+If viewer opens but the video does not connect so first verify that configured public IP is reachable from browser machine.
 
 ---
 
+# Open Scene Commander
 
-# 8. Load an Isaac scene
+Open:
 
-Load the standard warehouse:
-
-```sh
-python3 commander.py scene-isaac \
-  Isaac/Environments/Simple_Warehouse/warehouse.usd \
-  --scale 1.0
+```text
+http://<ISAAC_HOST_IP>:8766
 ```
 
-Load the full warehouse:
+When working directly on the Isaac machine:
 
-```sh
-python3 commander.py scene-isaac \
-  Isaac/Environments/Simple_Warehouse/full_warehouse.usd \
-  --scale 1.0
+```text
+http://127.0.0.1:8766
 ```
 
-The scene is loaded live without restarting Isaac Sim.
+Scene Commander is used to construct and modify Isaac environment while the simulator is running.
 
-Runtime environments are created beneath:
+## Scene controls
+
+The **Scene** section allows you to:
+
+- Select an Isaac environment
+- Set the scene scale
+- Load the selected scene
+- Clear the runtime scene
+
+Scene assets are provided byIsaac-side asset catalogue so exact catalogue can evolve without changing web application.
+
+Examples include warehouse and grid environments.
+
+Runtime scenes are created under:
 
 ```text
 /World/RuntimeScene
@@ -161,179 +211,341 @@ Runtime environments are created beneath:
 
 ---
 
-# 6. Open OpenArm Commander
+# Search and spawn objects
 
-Open a second browser tab:
+Scene Commander provides an asset search field.
 
-```text
-http://localhost:8765
-```
-
-Use this interface to move the simulated OpenArm arms and grippers.
-
----
-
-# 9. Add a table
-
-Spawn a table in front of the robot:
-
-```sh
-python3 commander.py spawn-isaac \
-  table \
-  Isaac/Props/Mounts/SeattleLabTable/table_instanceable.usd \
-  0.75 0.0 0.2 \
-  --scale 0.5 \
-  --physics none
-```
----
-
-# 10. Add manipulation objects
-
-## Cracker box
-
-```sh
-python3 commander.py spawn-isaac \
-  cracker_box \
-  Isaac/Props/YCB/Axis_Aligned/003_cracker_box.usd \
-  0.70 0.0 0.90 \
-  --scale 0.5 \
-  --physics none
-```
-
-## Power drill
-
-```sh
-python3 commander.py spawn-isaac \
-  drill \
-  Isaac/Props/YCB/Axis_Aligned/035_power_drill.usd \
-  0.70 0.20 0.90 \
-  --scale 1.0 \
-  --physics none
-```
-
-Runtime objects are created beneath:
+Examples of searchable assets include:
 
 ```text
-/World/RuntimeObjects/<name>
+table
+can
+cracker
+drill
+block
+bottle
+```
+
+For a selected object, configure:
+
+```text
+X position
+Y position
+Z position
+Scale
+Physics
+Mass
+```
+
+Then press:
+
+```text
+Spawn Object
+```
+
+Isaac assigns each spawned object a unique ID similar to:
+
+```text
+obj_626b16769f97
+```
+
+Runtime objects are created under:
+
+```text
+/World/RuntimeObjects/<object_id>
 ```
 
 ---
 
-# 11. Move objects
+# Object physics modes
 
-Move the cracker box:
+Scene Commander supports three physics modes.
 
-```sh
-python3 commander.py move cracker_box 0.65 -0.10 0.90
-```
-
-Move the drill:
-
-```sh
-python3 commander.py move drill 0.70 0.15 0.90
-```
-
-This lets you assemble the workcell interactively while Isaac remains running.
-
----
-
-# 12. Enable physics when required
-
-Runtime objects support:
+## None
 
 ```text
-none
-static
-dynamic
+Physics = none
 ```
 
-Use:
+Use this for assets that should only be placed visually and should not participate in rigid-body physics.
+
+This is useful for:
+
+- initial layout
+- visual props
+- complex assets during placement testing
+
+## Static
 
 ```text
---physics none
+Physics = static
 ```
 
-for environments, complex USDs, conveyors, articulated assets, or initial placement tests.
+Use this for fixed objects such as:
 
-Use:
+- tables
+- shelves
+- walls
+- fixtures
+- work surfaces
+
+Static objects participate in collision but do not move dynamically.
+
+## Dynamic
 
 ```text
---physics static
+Physics = dynamic
 ```
 
-for fixed objects such as tables, shelves, walls, and fixtures.
+Use this for objects that should:
 
-Use:
-
-```text
---physics dynamic
-```
-
-for objects that OpenArm should push, grasp, lift, move, or drop.
-
-Example:
-
-```sh
-python3 commander.py remove cracker_box
-```
-
-Respawn it slightly above the support surface:
-
-```sh
-python3 commander.py spawn-isaac \
-  cracker_box \
-  Isaac/Props/YCB/Axis_Aligned/003_cracker_box.usd \
-  0.70 0.0 0.95 \
-  --scale 1.0 \
-  --physics dynamic \
-  --mass 0.3
-```
+- fall under gravity
+- collide
+- be pushed
+- be grasped
+- be lifted
+- receive external forces
 
 Mass is specified in kilograms.
 
----
-
-# 13. Control OpenArm
-
-Use:
+Example:
 
 ```text
-http://localhost:8765
+Physics = dynamic
+Mass = 0.5 kg
 ```
 
-to control the robot while watching:
+---
+
+# Runtime Object controls
+
+Every spawned object appears in the **Runtime Objects** section.
+
+The object entry shows information such as:
 
 ```text
-http://<ISAAC_HOST_IP>:8210
+object_id
+asset_id
+physics mode
+mass
+position
 ```
 
-# 16. Remove objects
+From this section you can:
 
-```sh
-python3 commander.py remove drill
-python3 commander.py remove cracker_box
-python3 commander.py remove table
+```text
+Move
+Remove
+Apply Force        dynamic objects only
 ```
+
+## Move an object
+
+Change its:
+
+```text
+X
+Y
+Z
+```
+
+coordinates and press:
+
+```text
+Move
+```
+
+This changes the object's runtime position without restarting Isaac Sim.
+
+## Remove an object
+
+Press:
+
+```text
+Remove
+```
+
+to delete that runtime object.
 
 ---
 
-# 17. Clear or replace the scene
+# 10. Apply force to a dynamic object
 
-Clear the current runtime scene:
+Objects spawned with:
 
-```sh
-python3 commander.py clear-scene
+```text
+Physics = dynamic
 ```
 
-Load another scene:
+provide additional force controls.
 
-```sh
-python3 commander.py scene-isaac \
-  Isaac/Environments/Simple_Warehouse/full_warehouse.usd \
-  --scale 1.0
+The Runtime Object card contains:
+
+```text
+Force magnitude (N)
+Duration (s)
+
++X    -X
++Y    -Y
++Z    -Z
 ```
+
+For example:
+
+```text
+Mass       = 0.5 kg
+Force      = 1.0 N
+Duration   = 0.5 s
+Direction  = +Y
+```
+
+Press:
+
+```text
++Y
+```
+
+to apply:
+
+```text
+[0.0, 1.0, 0.0] N
+```
+
+in Isaac world frame.
+
+The force is automatically disabled after selected duration.
+
+For lightweight objects, start with small forces.
+
+For example:
+
+```text
+0.1 kg object:
+0.2 – 0.5 N
+
+0.5 kg object:
+0.5 – 2 N
+```
+
+Avoid starting very large forces such as `20 N` on lightweight objects.
+
+Force control is currently world-frame XYZ force control.
+
+Torque and mouse-based viewport force manipulators are not currently exposed.
 
 ---
 
+# 11. Move the OpenArm robot root
+
+Scene Commander also provides robot-root positioning.
+
+Set:
+
+```text
+X
+Y
+Z
+```
+
+and use:
+
+```text
+Move Robot
+```
+
+to reposition the OpenArm base in the Isaac world.
+
+This is useful when configuring new workcells or positioning the robot relative to tables, shelves and manipulation objects.
+
+---
+
+# Open OpenArm Commander
+
+Open:
+
+```text
+http://<ISAAC_HOST_IP>:8765
+```
+
+or locally:
+
+```text
+http://127.0.0.1:8765
+```
+
+OpenArm Commander controls robot itself.
 
 
+
+# Typical workflow
+
+A normal interactive session is:
+
+```text
+1. Launch the OpenArm Isaac stack
+
+2. Open Isaac Viewer
+   http://<IP>:8210
+
+3. Open Scene Commander
+   http://<IP>:8766
+
+4. Load an environment
+
+5. Search for a table or fixture
+
+6. Spawn it as Static
+
+7. Search for manipulation objects
+
+8. Spawn them as Dynamic
+
+9. Set appropriate mass
+
+10. Use Runtime Objects to adjust positions
+
+11. Apply small external forces if required
+
+12. Open OpenArm Commander
+    http://<IP>:8765
+
+13. Move the arms and grippers
+
+14. Observe everything live through the Isaac Viewer
+```
+
+
+# 20. Ports summary
+
+| Service | Port | Purpose |
+|---|---:|---|
+| Isaac Viewer | 8210/TCP | Browser interface |
+| OpenArm Commander | 8765/TCP | Arm and gripper control |
+| Scene Commander | 8766/TCP | Scene/object/physics control |
+| WebRTC Signalling | 49100/TCP | Isaac WebRTC signalling |
+| WebRTC Stream | 47998/UDP | Isaac WebRTC media |
+
+---
+
+## Current architecture
+
+```text
+                       Browser
+                          |
+         +----------------+----------------+
+         |                |                |
+         v                v                v
+   Isaac Viewer     Scene Commander   OpenArm Commander
+      :8210              :8766             :8765
+         |                |                |
+         |                v                v
+         |        openarm_sim_isaac   openarm_backbone
+         |                ^                |
+         |                |                v
+         |                |         simulation relays
+         |                |                |
+         +----------------+----------------+
+                          |
+                          v
+                      Isaac Sim
+```
