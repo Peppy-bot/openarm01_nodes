@@ -31,6 +31,11 @@
         path: "openarm_gripper_sim/peppy.json5"
       }
     },
+    openarm_isaac_webviewer: {
+      v1: {
+        path: "openarm_isaac_webviewer/peppy.json5"
+      }
+    },
     openarm_ker: {
       v1: {
         path: "openarm_ker/peppy.json5"
@@ -39,6 +44,11 @@
     openarm_robot_initializer: {
       v1: {
         path: "openarm_robot_initializer/peppy.json5"
+      }
+    },
+    openarm_scene_commander: {
+      v1: {
+        path: "openarm_scene_commander/peppy.json5"
       }
     },
     openarm_sim_isaac: {
